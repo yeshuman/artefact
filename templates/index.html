@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    {% load static %}
+    <!-- <script src="{% static 'htmx.min.js' %}"></script> -->
+    <!-- <script src="{% static 'htmx.ext.sse.js' %}"></script> -->
+    <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/sse.js"></script>
+    <script>
+        htmx.logAll();
+    </script>
+
+</head>
+<body>
+    <main>
+        <div id="chat-container">
+            <div id="chat-stream-container"></div>
+            <div id="chat-stream-listener"
+                 sse-connect="/chat-stream/"
+                 sse-swap="ai"
+                 hx-ext="sse"
+                 hx-swap="beforeend"
+                 hx-target="#chat-stream-container">
+            </div>
+            <form hx-post="/chat-post/"
+                  hx-on::after-request="this.reset()"
+                  hx-swap="none"
+                  hx-trigger="submit"
+                  hx-indicator="#submit-indicator">
+                {% csrf_token %}
+                <input type="text" name="message" required>
+                <button type="submit">
+                    Send
+                    <span id="submit-indicator" class="htmx-indicator">...</span>
+                </button>
+            </form>
+            <div id="chat-stream-system-messages"
+                 sse-connect="/chat-stream/"
+                 sse-swap="system"
+                 hx-ext="sse"
+                 hx-swap="innerHTML">
+            </div>
+        </div>
+
+        <style>
+            :root {
+                color-scheme: light dark;
+            }
+            
+            body {
+                background-color: #ffffff;
+                color: #000000;
+            }
+
+            .ai-message {
+                margin: 10px 0;
+                padding: 10px;
+                background: #f5f5f5;
+                border-radius: 5px;
+            }
+            
+            .error-message {
+                color: #ff4444;
+                margin: 10px 0;
+            }
+            
+            .system-message {
+                color: #666666;
+                font-style: italic;
+                margin: 10px 0;
+            }
+
+            @media (prefers-color-scheme: dark) {
+                body {
+                    background-color: #1a1a1a;
+                    color: #ffffff;
+                }
+                
+                .ai-message {
+                    background: #2a2a2a;
+                }
+                
+                .error-message {
+                    color: #ff6b6b;
+                }
+                
+                .system-message {
+                    color: #999999;
+                }
+            }
+            
+            .htmx-indicator {
+                display: none;
+            }
+            .htmx-request .htmx-indicator {
+                display: inline;
+            }
+            
+            button:disabled {
+                opacity: 0.5;
+            }
+        </style>
+    </main>
+
+</body>
+</html>
+
