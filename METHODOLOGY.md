@@ -14,10 +14,9 @@
 - Development Tools:
   - livereload for auto-reloading:
     ```bash
-    poetry run python manage.py livereload
+    python manage.py livereload
     ```
   - httpx for async HTTP requests
-  - Django debug toolbar
 
 ## 2. Incremental Code Development
 - Each code segment must be:
@@ -33,7 +32,7 @@
 - Write pytest tests for new functionality
 - Use pytest-watch (ptw) during development:
   ```bash
-  poetry run ptw -- -vv
+  ptw -- -vv
   ```
 - Test categories:
   - Unit tests for individual functions
@@ -73,18 +72,17 @@
 - Terminal Commands Checklist:
   ```bash
   # Terminal 1: Django development server
-  poetry run python manage.py runserver
+  ./manage.py runserver
 
   # Terminal 2: Live reload
-  poetry run python manage.py livereload
+  ./manage.py livereload
 
   # Terminal 3: Pytest watch
-  poetry run ptw -- -vv
+  ptw -- -vv
   ```
 - Document successful command sequences
 - Track error messages and resolutions
 - Verify HTMX interactions in browser dev tools
-- Check Django debug toolbar for performance
 
 ## 7. Progress Tracking
 - Verify each step before proceeding:
@@ -112,9 +110,6 @@
 
 - Test execution with pytest-watch:
   ```bash
-  # First, activate poetry shell
-  poetry shell
-
   # Run with mocks (fast, default)
   ptw -- -vv
 
