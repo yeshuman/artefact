@@ -19,7 +19,13 @@ daphne = "^4.1.2"
 uuid = "^1.30"
 openai = "^1.55.2"
 ipdb = "^0.13.13"
+pytest-watcher = "^0.4.3"
+pytest = "^8.3.4"
 
+
+[tool.poetry.group.dev.dependencies]
+pytest-asyncio = "^0.24.0"
+pytest-django = "^4.9.0"
 
 [build-system]
 requires = ["poetry-core"]

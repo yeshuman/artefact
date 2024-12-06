@@ -19,9 +19,8 @@ def chat(request):
 async def chat_post(request):
     if request.method == "POST":
         message = request.POST.get('message', '')
-        await sync_to_async(HumanMessage.objects.create)(
-            text=message
-        )
+        human_message = HumanMessage(text=message)
+        await sync_to_async(human_message.save)()
         return JsonResponse({"status": "success"})
     return JsonResponse({"status": "error"}, status=400)
 
