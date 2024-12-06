@@ -1,5 +1,12 @@
 # Development Methodology Specification
 
+
+## 0. Context
+- Don't create new files unless you ask
+- Ensure that you've been given the right files in your context so that you can work on the right code
+- Before creating new files ensure we have a commit that we can revert to if you need to
+
+
 ## 1. Technology Stack
 - Django Framework:
   - Async views where possible

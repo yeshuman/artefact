@@ -1,0 +1,105 @@
+# Artefact Project Cursor Rules
+
+# Project Structure
+structure:
+  apps:
+    - chats
+  test_location: tests/
+  static_location: static/
+  template_location: templates/
+
+# Code Style & Standards
+style:
+  indent: 4
+  quotes: single
+  max_line_length: 88
+  async_first: true
+  docstring: google
+  django_style:
+    views: async_preferred
+    templates: htmx_enhanced
+
+# Testing Framework
+tests:
+  framework: pytest
+  patterns:
+    - test_*.py
+    - integration_test_*.py
+    - async_test_*.py
+  fixtures_location: tests/conftest.py
+  mocking:
+    external_apis: true
+    openai: true
+  categories:
+    - unit
+    - integration
+    - async
+    - htmx
+    - streaming
+
+# Documentation Requirements
+docs:
+  required_sections:
+    - Purpose
+    - Parameters
+    - Returns
+    - Raises
+    - Example
+  update_specs: true
+  living_docs:
+    - SPECIFICATIONS.md
+    - METHODOLOGY.md
+
+# Technology Preferences
+tech:
+  frontend:
+    primary: htmx
+    javascript: minimal
+    templates: django
+  backend:
+    framework: django
+    version: "5.0+"
+    async: true
+    streaming: sse
+  external:
+    - httpx
+    - openai
+    - pytest-watch
+
+# Development Workflow
+workflow:
+  branch_prefix: feature/
+  commit_format: "[WIP] component: description"
+  verification:
+    - tests_pass
+    - docs_updated
+    - specs_updated
+
+# Security Rules
+security:
+  required_checks:
+    - input_sanitization
+    - api_key_protection
+    - csrf_enabled
+    - rate_limiting
+
+# Exclude Patterns
+exclude:
+  - venv/
+  - __pycache__/
+  - *.pyc
+  - .env
+  - node_modules/
+  - .pytest_cache/
+
+# AI Assistance Focus
+ai_assistance:
+  prioritize:
+    - async_patterns
+    - streaming_responses
+    - htmx_integration
+    - test_coverage
+  avoid:
+    - complex_javascript
+    - sync_views
+    - raw_sql
