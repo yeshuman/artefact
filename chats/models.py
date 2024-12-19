@@ -24,11 +24,13 @@ class Message(PolymorphicModel):
         ordering = ['-created_at']
 
 
+
 class HumanMessage(Message):
     # user = models.ForeignKey(User, on_delete=models.CASCADE)
     pass
 
 
-
 class BotMessage(Message):
     pass
+
+
