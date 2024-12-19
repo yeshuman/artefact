@@ -19,9 +19,34 @@ style:
     views: async_preferred
     templates: htmx_enhanced
 
+# Documentation Requirements
+docs:
+  required_sections:
+    - Purpose
+    - Parameters
+    - Returns
+    - Raises
+    - Example
+  update_required:
+    - README.md: Project overview changes
+    - CHANGELOG.md: All notable changes
+    - METHODOLOGY.md: Development approach changes
+    - docs/*.md: Feature documentation
+  api_docs_required: true
+  ui_docs_required: true
+  update_specs: true
+  living_docs:
+    - SPECIFICATIONS.md
+    - METHODOLOGY.md
+    - README.md
+
 # Testing Framework
 tests:
   framework: pytest
+  required_for:
+    - feature_changes: true
+    - bug_fixes: true
+    - refactoring: true
   patterns:
     - test_*.py
     - integration_test_*.py
@@ -36,19 +61,44 @@ tests:
     - async
     - htmx
     - streaming
+  organization:
+    real_tests:
+      mark: pytest.mark.real
+      description: "Tests that call real external APIs"
+      requires:
+        - Valid API credentials
+        - Internet connection
+        - Real test data
+    mock_tests:
+      mark: pytest.mark.mock
+      description: "Tests using mocked responses"
+      requires:
+        - Fixture data
+        - Response templates
+  execution:
+    default: "pytest -v -m 'not real'"
+    all: "pytest -v"
+    real_only: "pytest -v -m real"
+    mock_only: "pytest -v -m mock"
 
-# Documentation Requirements
-docs:
-  required_sections:
-    - Purpose
-    - Parameters
-    - Returns
-    - Raises
-    - Example
-  update_specs: true
-  living_docs:
-    - SPECIFICATIONS.md
-    - METHODOLOGY.md
+# File Management
+file_management:
+  create_new:
+    requires_permission: true
+    needs_revert_commit: true
+    protocol:
+      - Get explicit user permission
+      - Create backup/revert point
+      - Document in CHANGELOG
+      - Add necessary tests
+      - Update documentation
+  modify_existing:
+    process: >
+      1. Present proposed changes in composer
+      2. Wait for user approval/modification
+      3. Iterate on changes until working solution
+      4. Run tests to verify changes
+      5. Apply changes after confirmation
 
 # Technology Preferences
 tech:
@@ -68,12 +118,37 @@ tech:
 
 # Development Workflow
 workflow:
+  branch_strategy:
+    current: feature_branches
+    details: >
+      All work done in feature branches.
+      Progressive WIP commits at each working state.
+      Rebase and clean up before merging to main.
   branch_prefix: feature/
   commit_format: "[WIP] component: description"
+  merge_format: "feat(component): description"
   verification:
     - tests_pass
     - docs_updated
     - specs_updated
+    - changelog_updated
+
+# AI Session Management
+ai_session:
+  session_start_checklist:
+    - review_changelog: true
+    - check_branch: true
+    - verify_files: true
+    - confirm_environment: true
+  context_maintenance:
+    changelog:
+      required: true
+      reference_in_commits: true
+      timestamp_format: "YYYY-MM-DD HH:mm AEDT"
+    documentation:
+      update_inline_comments: true
+      maintain_methodology: true
+      sync_readme: true
 
 # Security Rules
 security:
@@ -91,6 +166,7 @@ exclude:
   - .env
   - node_modules/
   - .pytest_cache/
+  - htmlcov/
 
 # AI Assistance Focus
 ai_assistance:
@@ -103,3 +179,15 @@ ai_assistance:
     - complex_javascript
     - sync_views
     - raw_sql
+
+# Change Management Rules
+change_scope:
+  principles:
+    - Only modify code directly related to the current task
+    - Stay within the boundaries of the specific instruction
+    - Avoid "while we're here" improvements
+    - Do not fix unrelated issues without explicit permission
+  enforcement:
+    - Each change must trace back to the original instruction
+    - Changes outside instruction scope require separate approval
+    - Document any discovered issues without fixing them

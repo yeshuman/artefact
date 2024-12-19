@@ -21,6 +21,7 @@ openai = "^1.55.2"
 ipdb = "^0.13.13"
 pytest-watcher = "^0.4.3"
 pytest = "^8.3.4"
+pgvector = "^0.3.6"
 
 
 [tool.poetry.group.dev.dependencies]
