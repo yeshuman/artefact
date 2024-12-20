@@ -44,7 +44,8 @@ class Satori(Sensei):
         from mondos.models import SatoriMessage
         return await SatoriMessage.objects.acreate(
             mondo=mondo,
-            content=content
+            content=content,
+            author=self.model_obj
         )
     
     async def respond(self, message: 'Message') -> 'SatoriMessage':
