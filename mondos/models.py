@@ -1,4 +1,5 @@
 from django.db import models
+from polymorphic.models import PolymorphicModel
 
 
 class Mondo(models.Model):
@@ -18,7 +19,7 @@ class Mondo(models.Model):
         return f"Mondo in {self.quest.title}"
 
 
-class Message(models.Model):
+class Message(PolymorphicModel):
     """A message within a Mondo dialogue."""
     mondo = models.ForeignKey(Mondo, related_name='messages', on_delete=models.CASCADE)
     content = models.TextField()
