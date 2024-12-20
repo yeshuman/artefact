@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="layout-container">
+    <!-- Conversation Panel -->
+    <div class="conversation-panel">
+        <div id="mondo-stream" 
+             hx-sse="connect:/stream/mondo">
+            <!-- Messages with artefact tags -->
+        </div>
+        <div id="mondo-system-messages"
+             hx-sse="connect:/stream/mondo"
+             sse-swap="system"
+             hx-swap="innerHTML">
+            <!-- System messages -->
+        </div>
+        <form hx-post="{% url 'mondo_message' %}"
+              hx-on::after-request="this.reset()"
+              hx-swap="none"
+              hx-trigger="submit"
+              hx-indicator="#submit-indicator">
+            {% csrf_token %}
+            <input type="hidden" name="mondo_id" value="{{ mondo.id }}">
+            <input type="text" name="content" required 
+                   placeholder="Enter your message...">
+            <button type="submit">
+                Send
+                <span id="submit-indicator" class="htmx-indicator">...</span>
+            </button>
+        </form>
+    </div>
+
+    <!-- Artefact Panel -->
+    <div class="artefact-panel">
+        <div id="artefact-detail" 
+             hx-sse="connect:/stream/artefacts">
+            <!-- Current artefact details -->
+        </div>
+        <div id="artefact-notifications"
+             hx-sse="connect:/stream/artefacts"
+             sse-swap="system"
+             hx-swap="innerHTML">
+            <!-- Processing status updates -->
+        </div>
+    </div>
+</div>
+
+<style>
+.layout-container {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1rem;
+    height: 100vh;
+    padding: 1rem;
+}
+
+.conversation-panel,
+.artefact-panel {
+    display: flex;
+    flex-direction: column;
+    background: white;
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+#mondo-stream,
+#artefact-detail {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+form {
+    display: flex;
+    gap: 0.5rem;
+    padding: 1rem;
+    border-top: 1px solid #eee;
+}
+
+input[type="text"] {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 0.25rem;
+}
+
+button {
+    padding: 0.5rem 1rem;
+    background: #0066cc;
+    color: white;
+    border: none;
+    border-radius: 0.25rem;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #0052a3;
+}
+
+.htmx-indicator {
+    display: none;
+}
+
+.htmx-request .htmx-indicator {
+    display: inline;
+}
+
+.chunk {
+    display: inline;
+}
+
+#mondo-system-messages,
+#artefact-notifications {
+    font-size: 0.8rem;
+    color: #666;
+    padding: 0.5rem;
+    border-top: 1px solid #eee;
+}
+</style>
+{% endblock %} 

@@ -70,6 +70,11 @@ async def mock_llm_client(mock_llm_responses):
             response_content = mock_llm_responses['satori_answer']
         elif "reflect on the answer" in prompt:
             response_content = mock_llm_responses['ronin_reflection']
+        elif "You are a dialogue observer" in prompt:
+            response_content = json.dumps(mock_llm_responses.get('conclusion_check', {
+                'should_end': False,
+                'reason': 'The conversation is still ongoing'
+            }))
         else:
             print(f"No match found for prompt: {prompt}")
             response_content = "Unknown prompt"
@@ -227,3 +232,56 @@ async def test_mondo_qa_interaction_real(dojo_with_real_llm):
     assert all(msg.content for msg in messages)  # All messages should have content
     authors = await sync_to_async(lambda: [msg.author for msg in messages])()
     assert all(authors)   # All messages should have authors
+
+@pytest.mark.real
+async def test_mondo_continue_conversation_real(dojo_with_real_llm):
+    """Test the automatic conversation continuation between Ronin and Satori."""
+    # Prepare the participants
+    await dojo_with_real_llm.prepare_ronin()
+    await dojo_with_real_llm.prepare_satori()
+    
+    # Begin the mondo
+    mondo = await dojo_with_real_llm.mondo()
+    
+    # Start the conversation loop
+    await dojo_with_real_llm.continue_mondo(mondo)
+    
+    # Verify conversation
+    messages = [msg async for msg in mondo.messages.all()]
+    assert len(messages) >= 2  # Should have at least shomon and one response
+    
+    # Verify alternating speakers
+    authors = await sync_to_async(lambda: [msg.author for msg in messages])()
+    for i in range(1, len(authors)):
+        prev_author = await sync_to_async(lambda: authors[i-1].name)()
+        curr_author = await sync_to_async(lambda: authors[i].name)()
+        assert prev_author != curr_author, "Speakers should alternate"
+    
+    # Verify all messages have content
+    for msg in messages:
+        content = await sync_to_async(lambda: msg.content)()
+        assert content, "All messages should have content"
+
+@pytest.mark.mock
+async def test_mondo_continue_conversation_mock(prepared_mock_dojo, mock_llm_responses):
+    """Test the automatic conversation continuation between Ronin and Satori with mocks."""
+    # Begin the mondo
+    mondo = await prepared_mock_dojo.mondo()
+    
+    # Add mock response for conclusion check
+    mock_llm_responses['conclusion_check'] = {
+        'should_end': True,
+        'reason': 'A moment of understanding has been reached'
+    }
+    
+    # Start the conversation loop
+    await prepared_mock_dojo.continue_mondo(mondo)
+    
+    # Verify conversation
+    messages = [msg async for msg in mondo.messages.all()]
+    assert len(messages) >= 2  # Should have at least shomon and one response
+    
+    # Verify all messages have content
+    for msg in messages:
+        content = await sync_to_async(lambda: msg.content)()
+        assert content, "All messages should have content"

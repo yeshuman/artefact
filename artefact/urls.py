@@ -1,10 +1,10 @@
-
 from django.urls import path
-# from chats.views import chat, chat_post, chat_stream
+from mondos.views import mondo_view, mondo_stream, artefact_stream, mondo_message
 
 urlpatterns = [
-    # path('', chat, name='chat'),
-    # path('chat-post/', chat_post, name='chat_post'),
-    # path('chat-stream/', chat_stream, name='chat_stream'),
+    path('', mondo_view, name='mondo_view'),
+    path('stream/mondo/', mondo_stream, name='mondo_stream'),
+    path('stream/artefacts/', artefact_stream, name='artefact_stream'),
+    path('mondo/message/', mondo_message, name='mondo_message'),
 ]
 

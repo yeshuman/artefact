@@ -1,4 +1,5 @@
 from typing import Optional, Any, TYPE_CHECKING
+from asgiref.sync import sync_to_async
 from dojo import Sensei
 from .models import Ronin  # DB Model class
 
@@ -64,10 +65,27 @@ class Ronin(Sensei):
         """
         if not self.llm_client:
             raise ValueError("Ronin requires an LLM client to formulate responses")
+        
+        # Get message content safely
+        content = await sync_to_async(lambda: message.content)()
+        mondo = await sync_to_async(lambda: message.mondo)()
             
         # Use LLM to generate a follow-up question
-        response = await self.llm_client.complete(
-            messages=[{"role": "user", "content": message.content}]
+        response = await self.llm_client.chat.completions.create(
+            model="gpt-4-1106-preview",
+            messages=[{
+                "role": "system",
+                "content": (
+                    f"You are a Ronin named {self.name} with interests in "
+                    f"{', '.join(self.interests)} and a {self.travel_style} "
+                    f"travel style. You are on a journey of discovery.\n\n"
+                    f"Consider the guidance you've received and respond with "
+                    f"thoughtful questions or reflections that deepen your understanding."
+                )
+            }, {
+                "role": "user",
+                "content": content
+            }]
         )
         
-        return await self.message(message.mondo, response)
+        return await self.message(mondo, response.choices[0].message.content)

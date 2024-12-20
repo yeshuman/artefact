@@ -2,15 +2,19 @@ from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from dataclasses import dataclass
 from datetime import datetime
 from openai import AsyncOpenAI
+from asgiref.sync import sync_to_async
 import json
 import logging
+import asyncio
+from quests.models import Quest
+from mondos.models import Mondo, RoninMessage, SatoriMessage
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from mondos.models import Mondo, Message
+    from mondos.models import Mondo, Message, RoninMessage, SatoriMessage
     from ronins.models import Ronin as RoninModel
     from satoris.models import Satori as SatoriModel
     from ronins.ronin import Ronin
@@ -266,21 +270,12 @@ class Dojo:
         return self.satori
     
     async def mondo(self) -> 'Mondo':
-        """Initiate a mondo dialogue between Ronin and Satori.
-        
-        The Ronin will contemplate and name their quest before beginning
-        the dialogue with the Satori.
-        
-        Returns:
-            Mondo: The newly created Mondo
-            
-        Raises:
-            ValueError: If Ronin or Satori is not prepared
-        """
+        """Initiate a mondo dialogue between Ronin and Satori."""
         if not self.ronin or not self.satori:
             raise ValueError("Both Ronin and Satori must be prepared before beginning a Mondo")
         
         # Let the Ronin contemplate and name their quest
+        logger.info(f"Ronin {self.ronin.name} contemplating quest...")
         response = await self.llm_client.chat.completions.create(
             model="gpt-4-1106-preview",
             messages=[{
@@ -298,15 +293,14 @@ class Dojo:
             }]
         )
         
-        
         # Clean and parse the response
         raw_response = response.choices[0].message.content
+        logger.info(f"Quest contemplation response:\n{raw_response}")
+        
         cleaned_json = self._clean_json_response(raw_response)
         contemplation = json.loads(cleaned_json)
         quest_title = contemplation['quest_title']
-        
-        from quests.models import Quest
-        from mondos.models import Mondo
+        logger.info(f"Quest title: {quest_title}")
         
         # Create the quest
         quest = await Quest.objects.acreate(
@@ -314,14 +308,101 @@ class Dojo:
             satori=self.satori.model_obj,
             title=quest_title
         )
+        logger.info(f"Created quest: {quest.id} - {quest.title}")
         
         # Create the mondo
         mondo = await Mondo.objects.acreate(quest=quest)
+        logger.info(f"Created mondo: {mondo.id}")
         
         # Generate the opening question (shomon)
         await self._shomon(mondo)
         
         return mondo
+
+    async def continue_mondo(self, mondo: 'Mondo') -> None:
+        """Continue an existing mondo dialogue.
+        
+        This method handles the back-and-forth conversation between
+        Ronin and Satori, checking for natural conclusion points.
+        """
+        try:
+            exchanges = 0
+            max_exchanges = 10  # Prevent infinite conversations
+            
+            while exchanges < max_exchanges:
+                logger.info(f"Exchange {exchanges + 1}/{max_exchanges}")
+                
+                # Get the latest message and its attributes safely
+                latest_message = await sync_to_async(lambda: mondo.messages.last())()
+                if not latest_message:
+                    logger.error("No messages found in mondo")
+                    break
+                
+                content = await sync_to_async(lambda: latest_message.content)()
+                author = await sync_to_async(lambda: latest_message.author)()
+                author_name = await sync_to_async(lambda: author.name)()
+                
+                # Ask LLM if the conversation has reached a natural conclusion
+                logger.info("Checking for natural conclusion...")
+                conclusion_check = await self.llm_client.chat.completions.create(
+                    model="gpt-4-1106-preview",
+                    messages=[{
+                        "role": "system",
+                        "content": (
+                            "You are a dialogue observer analyzing if a conversation has reached a natural conclusion.\n\n"
+                            "Consider these factors:\n"
+                            "1. A moment of understanding has been reached\n"
+                            "2. The initial question has been thoroughly explored\n"
+                            "3. A natural ending point has emerged\n\n"
+                            "IMPORTANT: You must respond with ONLY a JSON object in this exact format:\n"
+                            "{\n"
+                            '  "should_end": false,\n'
+                            '  "reason": "Explanation of why the conversation should or should not end"\n'
+                            "}\n\n"
+                            "Do not include any other text or explanation outside the JSON object."
+                        )
+                    }, {
+                        "role": "user",
+                        "content": content
+                    }]
+                )
+                
+                try:
+                    raw_response = conclusion_check.choices[0].message.content
+                    cleaned_json = self._clean_json_response(raw_response)
+                    conclusion = json.loads(cleaned_json)
+                    logger.info(f"Conclusion check: {json.dumps(conclusion, indent=2)}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse conclusion check response: {raw_response}")
+                    raise
+                
+                if conclusion["should_end"]:
+                    logger.info(f"Mondo concluding: {conclusion['reason']}")
+                    break
+                
+                # Determine next speaker based on last message
+                if isinstance(latest_message, RoninMessage):
+                    logger.info("Satori's turn to respond...")
+                    response = await self.satori.respond(latest_message)
+                    response_content = await sync_to_async(lambda: response.content)()
+                    logger.info(f"Satori {self.satori.name} responded:\n{response_content}")
+                else:
+                    logger.info("Ronin's turn to respond...")
+                    response = await self.ronin.respond(latest_message)
+                    response_content = await sync_to_async(lambda: response.content)()
+                    logger.info(f"Ronin {self.ronin.name} responded:\n{response_content}")
+                
+                exchanges += 1
+                await asyncio.sleep(0)
+                
+            if exchanges >= max_exchanges:
+                logger.info(f"Mondo {mondo.id} reached maximum exchanges")
+                
+        except asyncio.CancelledError:
+            logger.info(f"Mondo {mondo.id} conversation loop cancelled")
+        except Exception as e:
+            logger.error(f"Error in Mondo {mondo.id} conversation loop: {e}")
+            raise
     
     async def _shomon(self, mondo: 'Mondo') -> None:
         """Generate and record the Ronin's first question (初問).
@@ -348,10 +429,15 @@ class Dojo:
             }]
         )
         
+        # Get the generated question
+        shomon_content = response.choices[0].message.content
+        logger.info(f"Ronin {self.ronin.name} opens the Mondo with shomon:\n{shomon_content}")
+        
         # Create the shomon message
         from mondos.models import RoninMessage
         await RoninMessage.objects.acreate(
             mondo=mondo,
-            content=response.choices[0].message.content,
+            content=shomon_content,
             author=self.ronin_obj
         )
+        logger.info(f"Shomon message recorded for Mondo {mondo.id}")

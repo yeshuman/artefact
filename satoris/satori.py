@@ -1,4 +1,5 @@
 from typing import Optional, Any, TYPE_CHECKING
+from asgiref.sync import sync_to_async
 from dojo import Sensei
 from .models import Satori  # DB Model class
 
@@ -59,6 +60,10 @@ class Satori(Sensei):
         """
         if not self.llm_client:
             raise ValueError("Satori requires an LLM client to formulate responses")
+        
+        # Get message content safely
+        content = await sync_to_async(lambda: message.content)()
+        mondo = await sync_to_async(lambda: message.mondo)()
             
         # Use LLM to generate guidance
         response = await self.llm_client.chat.completions.create(
@@ -68,12 +73,15 @@ class Satori(Sensei):
                 "content": (
                     f"You are a Satori named {self.name} with specialties in "
                     f"{', '.join(self.specialties)} and a {self.teaching_style} "
-                    f"teaching style. Respond to this seeker's question with wisdom and guidance."
+                    f"teaching style.\n\n"
+                    f"Respond to this seeker's question with wisdom and guidance. "
+                    f"Naturally mention relevant places, cultural sites, or historical "
+                    f"locations that illustrate your teachings."
                 )
             }, {
                 "role": "user",
-                "content": message.content
+                "content": content
             }]
         )
         
-        return await self.message(message.mondo, response.choices[0].message.content)
+        return await self.message(mondo, response.choices[0].message.content)
