@@ -154,6 +154,15 @@ A real-time system for identifying travel-related entities from LLM conversation
 - User feedback integration
 - Custom artefact linking
 
+#### Conversation Flow with Artefacts
+
+The system implements a natural conversation flow where:
+1. Satori's responses contain tagged artefact references
+2. Ronin can naturally focus on interesting artefacts
+3. The conversation flows through discovered places and experiences
+
+See FEATURES/artefact_conversation_flow.md for detailed implementation specs.
+
 ## Technical Architecture
 
 ### Backend Components
