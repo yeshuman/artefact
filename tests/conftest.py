@@ -2,6 +2,8 @@ import pytest
 from django.conf import settings
 import os
 
+pytest_plugins = ["pytest_asyncio"]
+
 def pytest_configure(config):
     """Configure test environment and settings."""
     # Register test markers

@@ -29,6 +29,7 @@ pytest-asyncio = "^0.25.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest-django = "^4.9.0"
+pytest-asyncio = "^0.25.0"
 
 [build-system]
 requires = ["poetry-core"]

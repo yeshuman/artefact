@@ -1,10 +1,13 @@
 import pytest
+import pytest_asyncio
 from unittest.mock import AsyncMock
 from openai import AsyncOpenAI
 import json
 from typing import AsyncGenerator
+from django.db import transaction
+from asgiref.sync import sync_to_async
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.django_db]
+pytestmark = [pytest.mark.django_db]
 
 @pytest.fixture
 def mock_llm_responses():
@@ -29,7 +32,7 @@ def mock_llm_responses():
         'ronin_reflection': "The leaves don't resist their falling - perhaps there is wisdom in acceptance."
     }
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def mock_llm_client(mock_llm_responses):
     """Create a mock LLM client that returns predefined responses."""
     client = AsyncMock(spec=AsyncOpenAI)
@@ -76,28 +79,27 @@ async def mock_llm_client(mock_llm_responses):
     completions_mock.create = mock_create
     return client
 
-@pytest.fixture
-def real_llm_client():
+@pytest_asyncio.fixture
+async def real_llm_client():
     """Create a real OpenAI client for integration tests."""
     return AsyncOpenAI()
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def dojo_with_mock_llm(mock_llm_client):
     """Create a Dojo instance with mock LLM client."""
     from dojo import Dojo
-    client = await mock_llm_client
-    return Dojo(llm_client=client)
+    return Dojo(llm_client=mock_llm_client)
 
-@pytest.fixture
-def dojo_with_real_llm(real_llm_client):
+@pytest_asyncio.fixture
+async def dojo_with_real_llm(real_llm_client):
     """Create a Dojo instance with real LLM client."""
     from dojo import Dojo
     return Dojo(llm_client=real_llm_client)
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def prepared_mock_dojo(dojo_with_mock_llm):
     """Create a Dojo instance with prepared Ronin and Satori using mocks."""
-    dojo = await dojo_with_mock_llm
+    dojo = dojo_with_mock_llm
     await dojo.prepare_ronin()
     await dojo.prepare_satori()
     return dojo
@@ -117,7 +119,7 @@ async def mondo_stream() -> AsyncGenerator[str, None]:
 @pytest.mark.mock
 async def test_dojo_prepare_ronin_mock(dojo_with_mock_llm):
     """Test preparing a Ronin with mock LLM."""
-    dojo = await dojo_with_mock_llm
+    dojo = dojo_with_mock_llm
     await dojo.prepare_ronin()
     assert dojo.ronin.name == "Matsuo Basho"
     assert "haiku poetry" in dojo.ronin.interests
@@ -125,7 +127,7 @@ async def test_dojo_prepare_ronin_mock(dojo_with_mock_llm):
 @pytest.mark.mock
 async def test_dojo_prepare_satori_mock(dojo_with_mock_llm):
     """Test preparing a Satori with mock LLM."""
-    dojo = await dojo_with_mock_llm
+    dojo = dojo_with_mock_llm
     await dojo.prepare_satori()
     assert dojo.satori.name == "Dogen Zenji"
     assert "zen philosophy" in dojo.satori.specialties
@@ -133,14 +135,14 @@ async def test_dojo_prepare_satori_mock(dojo_with_mock_llm):
 @pytest.mark.mock
 async def test_dojo_mondo_mock(prepared_mock_dojo):
     """Test beginning a mondo with mock LLM."""
-    dojo = await prepared_mock_dojo
+    dojo = prepared_mock_dojo
     mondo = await dojo.mondo()
     assert mondo.quest.title == "Footprints in Mountain Mist"
 
 @pytest.mark.mock
 async def test_dojo_shomon_mock(prepared_mock_dojo):
     """Test generating a shomon with mock LLM."""
-    dojo = await prepared_mock_dojo
+    dojo = prepared_mock_dojo
     mondo = await dojo.mondo()
     messages = [msg async for msg in mondo.messages.all()]
     assert len(messages) == 1
@@ -163,7 +165,7 @@ async def test_dojo_prepare_satori_real(dojo_with_real_llm):
 @pytest.mark.mock
 async def test_mondo_qa_interaction_mock(prepared_mock_dojo, mock_llm_responses):
     """Test Q&A interaction between Ronin and Satori with mock responses."""
-    dojo = await prepared_mock_dojo
+    dojo = prepared_mock_dojo
     
     # Begin the mondo
     mondo = await dojo.mondo()
@@ -204,20 +206,24 @@ async def test_mondo_qa_interaction_real(dojo_with_real_llm):
     # Ronin asks a question
     question = await dojo_with_real_llm.ronin.message(mondo, "What is the nature of impermanence?")
     assert question.content
-    assert question.author.name == dojo_with_real_llm.ronin.name
+    author_name = await sync_to_async(lambda: question.author.name)()
+    assert author_name == dojo_with_real_llm.ronin.name
     
     # Satori answers
     answer = await dojo_with_real_llm.satori.respond(question)
     assert answer.content
-    assert answer.author.name == dojo_with_real_llm.satori.name
+    author_name = await sync_to_async(lambda: answer.author.name)()
+    assert author_name == dojo_with_real_llm.satori.name
     
     # Ronin reflects
     reflection = await dojo_with_real_llm.ronin.message(mondo, "I see now...")
     assert reflection.content
-    assert question.author.name == dojo_with_real_llm.ronin.name
+    author_name = await sync_to_async(lambda: reflection.author.name)()
+    assert author_name == dojo_with_real_llm.ronin.name
     
     # Verify message sequence
     messages = [msg async for msg in mondo.messages.all()]
     assert len(messages) == 4  # shomon + question + answer + reflection
     assert all(msg.content for msg in messages)  # All messages should have content
-    assert all(msg.author for msg in messages)   # All messages should have authors
+    authors = await sync_to_async(lambda: [msg.author for msg in messages])()
+    assert all(authors)   # All messages should have authors
