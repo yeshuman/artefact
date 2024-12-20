@@ -87,7 +87,9 @@ async def mock_llm_client(mock_llm_responses):
 @pytest_asyncio.fixture
 async def real_llm_client():
     """Create a real OpenAI client for integration tests."""
-    return AsyncOpenAI()
+    client = AsyncOpenAI()
+    yield client
+    await client.close()
 
 @pytest_asyncio.fixture
 async def dojo_with_mock_llm(mock_llm_client):
@@ -99,7 +101,9 @@ async def dojo_with_mock_llm(mock_llm_client):
 async def dojo_with_real_llm(real_llm_client):
     """Create a Dojo instance with real LLM client."""
     from dojo import Dojo
-    return Dojo(llm_client=real_llm_client)
+    dojo = Dojo(llm_client=real_llm_client)
+    yield dojo
+    await dojo.cleanup()
 
 @pytest_asyncio.fixture
 async def prepared_mock_dojo(dojo_with_mock_llm):
@@ -107,7 +111,8 @@ async def prepared_mock_dojo(dojo_with_mock_llm):
     dojo = dojo_with_mock_llm
     await dojo.prepare_ronin()
     await dojo.prepare_satori()
-    return dojo
+    yield dojo
+    await dojo.cleanup()
 
 @pytest.fixture
 async def mondo_stream() -> AsyncGenerator[str, None]:
@@ -244,7 +249,7 @@ async def test_mondo_continue_conversation_real(dojo_with_real_llm):
     mondo = await dojo_with_real_llm.mondo()
     
     # Start the conversation loop
-    await dojo_with_real_llm.continue_mondo(mondo)
+    await dojo_with_real_llm.continue_mondo(mondo, max_exchanges=3)
     
     # Verify conversation
     messages = [msg async for msg in mondo.messages.all()]
@@ -275,6 +280,51 @@ async def test_mondo_continue_conversation_mock(prepared_mock_dojo, mock_llm_res
     }
     
     # Start the conversation loop
+    await prepared_mock_dojo.continue_mondo(mondo, max_exchanges=3)
+    
+    # Verify conversation
+    messages = [msg async for msg in mondo.messages.all()]
+    assert len(messages) >= 2  # Should have at least shomon and one response
+    
+    # Verify all messages have content
+    for msg in messages:
+        content = await sync_to_async(lambda: msg.content)()
+        assert content, "All messages should have content"
+
+@pytest.mark.mock
+async def test_mondo_continue_conversation_custom_length_mock(prepared_mock_dojo, mock_llm_responses):
+    """Test the conversation continuation with custom max_exchanges."""
+    # Begin the mondo
+    mondo = await prepared_mock_dojo.mondo()
+    
+    # Set a low max_exchanges value
+    max_exchanges = 2
+    
+    # Start the conversation loop
+    await prepared_mock_dojo.continue_mondo(mondo, max_exchanges=max_exchanges)
+    
+    # Verify conversation
+    messages = [msg async for msg in mondo.messages.all()]
+    assert len(messages) <= max_exchanges + 1  # +1 for initial shomon
+    
+    # Verify all messages have content
+    for msg in messages:
+        content = await sync_to_async(lambda: msg.content)()
+        assert content, "All messages should have content"
+
+@pytest.mark.mock
+async def test_mondo_continue_conversation_unlimited_mock(prepared_mock_dojo, mock_llm_responses):
+    """Test the conversation continuation with no exchange limit."""
+    # Begin the mondo
+    mondo = await prepared_mock_dojo.mondo()
+    
+    # Add mock response for conclusion check that will end after 2 exchanges
+    mock_llm_responses['conclusion_check'] = {
+        'should_end': False,
+        'reason': 'The conversation is still ongoing'
+    }
+    
+    # Start the conversation loop with no exchange limit
     await prepared_mock_dojo.continue_mondo(mondo)
     
     # Verify conversation

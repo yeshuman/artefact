@@ -319,19 +319,21 @@ class Dojo:
         
         return mondo
 
-    async def continue_mondo(self, mondo: 'Mondo') -> None:
+    async def continue_mondo(self, mondo: 'Mondo', max_exchanges: Optional[int] = None) -> None:
         """Continue an existing mondo dialogue.
         
         This method handles the back-and-forth conversation between
         Ronin and Satori, checking for natural conclusion points.
+        
+        Args:
+            mondo: The mondo instance to continue
+            max_exchanges: Optional maximum number of exchanges before ending.
+                         If None, will continue until natural conclusion.
         """
         try:
             exchanges = 0
-            max_exchanges = 10  # Prevent infinite conversations
             
-            while exchanges < max_exchanges:
-                logger.info(f"Exchange {exchanges + 1}/{max_exchanges}")
-                
+            while True:
                 # Get the latest message and its attributes safely
                 latest_message = await sync_to_async(lambda: mondo.messages.last())()
                 if not latest_message:
@@ -341,6 +343,12 @@ class Dojo:
                 content = await sync_to_async(lambda: latest_message.content)()
                 author = await sync_to_async(lambda: latest_message.author)()
                 author_name = await sync_to_async(lambda: author.name)()
+                
+                exchange_info = f"Exchange {exchanges + 1}"
+                if max_exchanges is not None:
+                    exchange_info += f"/{max_exchanges}"
+                logger.info(exchange_info)
+                logger.info(f"Latest message from {author_name}:\n{content}")
                 
                 # Ask LLM if the conversation has reached a natural conclusion
                 logger.info("Checking for natural conclusion...")
@@ -393,10 +401,11 @@ class Dojo:
                     logger.info(f"Ronin {self.ronin.name} responded:\n{response_content}")
                 
                 exchanges += 1
-                await asyncio.sleep(0)
+                if max_exchanges is not None and exchanges >= max_exchanges:
+                    logger.info(f"Mondo {mondo.id} reached maximum exchanges ({max_exchanges})")
+                    break
                 
-            if exchanges >= max_exchanges:
-                logger.info(f"Mondo {mondo.id} reached maximum exchanges")
+                await asyncio.sleep(0)
                 
         except asyncio.CancelledError:
             logger.info(f"Mondo {mondo.id} conversation loop cancelled")
@@ -441,3 +450,20 @@ class Dojo:
             author=self.ronin_obj
         )
         logger.info(f"Shomon message recorded for Mondo {mondo.id}")
+
+    async def cleanup(self) -> None:
+        """Clean up resources used by the Dojo.
+        
+        This should be called when you're done using the Dojo instance
+        to ensure proper cleanup of resources like API clients.
+        """
+        if hasattr(self.llm_client, 'close'):
+            await self.llm_client.close()
+            
+    async def __aenter__(self):
+        """Support async context manager protocol."""
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Clean up resources when exiting context."""
+        await self.cleanup()
