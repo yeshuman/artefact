@@ -97,19 +97,19 @@ class Dojo:
     def __init__(
         self,
         llm_client: Optional[AsyncOpenAI] = None,
-        ronin_model: Optional['RoninModel'] = None,
-        satori_model: Optional['SatoriModel'] = None
+        ronin_obj: Optional['Ronin'] = None,
+        satori_obj: Optional['Satori'] = None
     ):
         """Initialize the Dojo with optional existing models.
         
         Args:
             llm_client: OpenAI client for LLM interactions
-            ronin_model: Optional existing Ronin model instance
-            satori_model: Optional existing Satori model instance
+            ronin_obj: Optional existing Ronin model instance
+            satori_obj: Optional existing Satori model instance
         """
         self.llm_client = llm_client or AsyncOpenAI()
-        self.ronin_model = ronin_model
-        self.satori_model = satori_model
+        self.ronin_obj = ronin_obj
+        self.satori_obj = satori_obj
         self.ronin: Optional['Ronin'] = None
         self.satori: Optional['Satori'] = None
         
@@ -170,22 +170,22 @@ class Dojo:
         cleaned_json = self._clean_json_response(raw_response)
         contemplation = json.loads(cleaned_json)
         
-        # Create or get the Django model instance
+        # Create or get the DB record
         from ronins.models import Ronin as RoninModel
-        if self.ronin_model is None:
-            self.ronin_model = await RoninModel.objects.acreate(
+        if self.ronin_obj is None:
+            self.ronin_obj = await RoninModel.objects.acreate(
                 name=contemplation['name'],
                 interests=contemplation['interests'],
                 travel_style=travel_style or contemplation['travel_style']
             )
         
-        # Create the Ronin instance
+        # Create the controller instance
         from ronins.ronin import Ronin
         self.ronin = Ronin(
             name=contemplation['name'],
             interests=contemplation['interests'],
             travel_style=travel_style or contemplation['travel_style'],
-            model_instance=self.ronin_model,
+            model_obj=self.ronin_obj,
             llm_client=self.llm_client
         )
         return self.ronin
@@ -243,9 +243,9 @@ class Dojo:
         
         # Create or get the Django model instance
         from satoris.models import Satori as SatoriModel
-        if self.satori_model is None:
+        if self.satori_obj is None:
             try:
-                self.satori_model = await SatoriModel.objects.acreate(
+                self.satori_obj = await SatoriModel.objects.acreate(
                     name=meditation['name'],
                     specialties=meditation['specialties'],
                     teaching_style=teaching_style or meditation['teaching_style']
@@ -260,7 +260,7 @@ class Dojo:
             name=meditation['name'],
             specialties=meditation['specialties'],
             teaching_style=teaching_style or meditation['teaching_style'],
-            model_instance=self.satori_model,
+            model_obj=self.satori_obj,
             llm_client=self.llm_client
         )
         return self.satori
@@ -310,8 +310,8 @@ class Dojo:
         
         # Create the quest
         quest = await Quest.objects.acreate(
-            ronin=self.ronin.obj,
-            satori=self.satori.obj,
+            ronin=self.ronin.model_obj,
+            satori=self.satori.model_obj,
             title=quest_title
         )
         
@@ -353,5 +353,5 @@ class Dojo:
         await RoninMessage.objects.acreate(
             mondo=mondo,
             content=response.choices[0].message.content,
-            author=self.ronin_model
+            author=self.ronin_obj
         )

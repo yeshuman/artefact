@@ -1,6 +1,6 @@
 from typing import Optional, Any, TYPE_CHECKING
 from dojo import Sensei
-from .models import Ronin as RoninModel
+from .models import Ronin  # DB Model class
 
 if TYPE_CHECKING:
     from mondos.models import Mondo, Message, RoninMessage
@@ -19,7 +19,7 @@ class Ronin(Sensei):
         name: str,
         interests: list[str],
         travel_style: str,
-        obj: Optional[RoninModel] = None,
+        model_obj: Optional[Ronin] = None,  # DB record
         llm_client: Optional[Any] = None
     ):
         """Initialize a new Ronin instance.
@@ -28,12 +28,13 @@ class Ronin(Sensei):
             name: The Ronin's given name
             interests: List of travel-related interests
             travel_style: Preferred style of travel
-            obj: Optional Django model instance
+            model_obj: Optional Django model instance
             llm_client: Optional LLM client for interactions
         """
-        super().__init__(name, obj, llm_client)
+        super().__init__(name, model_obj, llm_client)
         self.interests = interests
         self.travel_style = travel_style
+        self.model_obj = model_obj  # Store reference to DB record
     
     async def message(self, mondo: 'Mondo', content: str) -> 'RoninMessage':
         """Create a question or reflection in a Mondo.
@@ -49,7 +50,7 @@ class Ronin(Sensei):
         return await RoninMessage.objects.acreate(
             mondo=mondo,
             content=content,
-            author=self.obj
+            author=self.model_obj
         )
     
     async def respond(self, message: 'Message') -> 'RoninMessage':

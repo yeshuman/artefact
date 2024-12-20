@@ -1,6 +1,6 @@
 from typing import Optional, Any, TYPE_CHECKING
 from dojo import Sensei
-from .models import Satori as SatoriModel
+from .models import Satori  # DB Model class
 
 if TYPE_CHECKING:
     from mondos.models import Mondo, Message, SatoriMessage
@@ -14,7 +14,7 @@ class Satori(Sensei):
         name: str,
         specialties: list[str],
         teaching_style: str,
-        model_instance: Optional[SatoriModel] = None,
+        model_obj: Optional[Satori] = None,  # DB record
         llm_client: Optional[Any] = None
     ):
         """Initialize a new Satori instance.
@@ -23,12 +23,13 @@ class Satori(Sensei):
             name: The Satori's given name
             specialties: Areas of deep understanding
             teaching_style: Approach to guiding others
-            model_instance: Optional Django model instance
+            model_obj: Optional Django model instance
             llm_client: Optional LLM client for interactions
         """
-        super().__init__(name, model_instance, llm_client)
+        super().__init__(name, model_obj, llm_client)
         self.specialties = specialties
         self.teaching_style = teaching_style
+        self.model_obj = model_obj  # Store reference to DB record
     
     async def message(self, mondo: 'Mondo', content: str) -> 'SatoriMessage':
         """Share guidance or insight in a Mondo.
