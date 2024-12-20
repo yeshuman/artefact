@@ -211,6 +211,7 @@ async def test_nearby_search(api_headers):
             logger.error(f"Response text: {response.text}")
             raise
 
+
 @pytest.mark.real
 @pytest.mark.skipif(
     not os.getenv('GOOGLE_PLACES_API_KEY'),
