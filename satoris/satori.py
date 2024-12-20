@@ -2,6 +2,9 @@ from typing import Optional, Any, TYPE_CHECKING
 from asgiref.sync import sync_to_async
 from dojo import Sensei
 from .models import Satori  # DB Model class
+import logging
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from mondos.models import Mondo, Message, SatoriMessage
@@ -66,7 +69,7 @@ class Satori(Sensei):
         mondo = await sync_to_async(lambda: message.mondo)()
             
         # Use LLM to generate guidance
-        response = await self.llm_client.chat.completions.create(
+        stream = await self.llm_client.chat.completions.create(
             model="gpt-4-1106-preview",
             messages=[{
                 "role": "system",
@@ -81,7 +84,18 @@ class Satori(Sensei):
             }, {
                 "role": "user",
                 "content": content
-            }]
+            }],
+            stream=True
         )
         
-        return await self.message(mondo, response.choices[0].message.content)
+        # Collect streamed response
+        full_response = []
+        async for chunk in stream:
+            if hasattr(chunk.choices[0].delta, 'content'):
+                content_chunk = chunk.choices[0].delta.content
+                if content_chunk:
+                    logger.info(f"Satori response chunk: {content_chunk}")
+                    full_response.append(content_chunk)
+        
+        response_content = ''.join(full_response)
+        return await self.message(mondo, response_content)

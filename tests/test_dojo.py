@@ -3,7 +3,7 @@ import pytest_asyncio
 from unittest.mock import AsyncMock
 from openai import AsyncOpenAI
 import json
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from django.db import transaction
 from asgiref.sync import sync_to_async
 
@@ -43,6 +43,36 @@ async def mock_llm_client(mock_llm_responses):
     client.chat = chat_mock
     chat_mock.completions = completions_mock
     
+    class MockDelta:
+        def __init__(self, content: Optional[str] = None):
+            self.content = content
+
+    class MockChoice:
+        def __init__(self, delta: MockDelta):
+            self.delta = delta
+
+    class MockStreamResponse:
+        def __init__(self, content: str):
+            self.content = content
+            self._chunks = []
+            # Split content into smaller chunks for streaming simulation
+            chunk_size = 10
+            for i in range(0, len(content), chunk_size):
+                chunk = content[i:i + chunk_size]
+                self._chunks.append(
+                    type('Chunk', (), {
+                        'choices': [MockChoice(MockDelta(chunk))]
+                    })
+                )
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._chunks:
+                raise StopAsyncIteration
+            return self._chunks.pop(0)
+
     class MockMessage:
         def __init__(self, content: str):
             self.content = content
@@ -56,30 +86,34 @@ async def mock_llm_client(mock_llm_responses):
         prompt = kwargs['messages'][0]['content']
         print(f"\nIncoming prompt: {prompt}\n")
         
+        # Determine the appropriate response based on the prompt
         if "identity as a Ronin" in prompt:
-            response_content = json.dumps(mock_llm_responses['ronin_meditation'])
+            content = json.dumps(mock_llm_responses['ronin_meditation'])
         elif "identity as a Satori" in prompt:
-            response_content = json.dumps(mock_llm_responses['satori_meditation'])
+            content = json.dumps(mock_llm_responses['satori_meditation'])
         elif "Name this quest" in prompt:
-            response_content = json.dumps(mock_llm_responses['quest_naming'])
+            content = json.dumps(mock_llm_responses['quest_naming'])
         elif "opening question" in prompt:
-            response_content = mock_llm_responses['shomon']
+            content = mock_llm_responses['shomon']
         elif "ask a question about" in prompt:
-            response_content = mock_llm_responses['ronin_question']
+            content = mock_llm_responses['ronin_question']
         elif "Respond to this seeker's question" in prompt:
-            response_content = mock_llm_responses['satori_answer']
+            content = mock_llm_responses['satori_answer']
         elif "reflect on the answer" in prompt:
-            response_content = mock_llm_responses['ronin_reflection']
+            content = mock_llm_responses['ronin_reflection']
         elif "You are a dialogue observer" in prompt:
-            response_content = json.dumps(mock_llm_responses.get('conclusion_check', {
+            content = json.dumps(mock_llm_responses.get('conclusion_check', {
                 'should_end': False,
                 'reason': 'The conversation is still ongoing'
             }))
         else:
             print(f"No match found for prompt: {prompt}")
-            response_content = "Unknown prompt"
-            
-        return MockResponse(MockMessage(response_content))
+            content = "Unknown prompt"
+
+        # Return streamed response if streaming is requested
+        if kwargs.get('stream', False):
+            return MockStreamResponse(content)
+        return MockResponse(MockMessage(content))
     
     completions_mock.create = mock_create
     return client
@@ -268,16 +302,61 @@ async def test_mondo_continue_conversation_real(dojo_with_real_llm):
         assert content, "All messages should have content"
 
 @pytest.mark.mock
-async def test_mondo_continue_conversation_mock(prepared_mock_dojo, mock_llm_responses):
+async def test_mondo_continue_conversation_mock(prepared_mock_dojo, mock_llm_responses, mock_llm_client):
     """Test the automatic conversation continuation between Ronin and Satori with mocks."""
     # Begin the mondo
     mondo = await prepared_mock_dojo.mondo()
     
-    # Add mock response for conclusion check
-    mock_llm_responses['conclusion_check'] = {
-        'should_end': True,
-        'reason': 'A moment of understanding has been reached'
-    }
+    # Get mock classes from the fixture
+    MockStreamResponse = type(await mock_llm_client.chat.completions.create(stream=True, messages=[{"role": "user", "content": "test"}]))
+    MockResponse = type(await mock_llm_client.chat.completions.create(stream=False, messages=[{"role": "user", "content": "test"}]))
+    MockMessage = type((await mock_llm_client.chat.completions.create(stream=False, messages=[{"role": "user", "content": "test"}])).choices[0].message)
+    
+    # Set up mock responses for the conversation
+    mock_llm_responses['conclusion_check'] = [
+        {
+            'should_end': False,
+            'reason': 'The conversation is still ongoing'
+        },
+        {
+            'should_end': True,
+            'reason': 'A moment of understanding has been reached'
+        }
+    ]
+    
+    # Track which conclusion check we're on
+    conclusion_check_count = 0
+    
+    # Override the mock_create function to handle sequential conclusion checks
+    async def updated_mock_create(**kwargs):
+        nonlocal conclusion_check_count
+        prompt = kwargs['messages'][0]['content']
+        
+        if "You are a dialogue observer" in prompt:
+            # Get the appropriate conclusion check based on count
+            check = mock_llm_responses['conclusion_check'][min(
+                conclusion_check_count,
+                len(mock_llm_responses['conclusion_check']) - 1
+            )]
+            conclusion_check_count += 1
+            content = json.dumps(check)
+        elif "Respond to this seeker's question" in prompt:
+            content = mock_llm_responses['satori_answer']
+        elif "Respond to this guidance" in prompt:
+            content = mock_llm_responses['ronin_reflection']
+        else:
+            # Use existing mock response logic
+            response = await prepared_mock_dojo.llm_client.chat.completions.create.original(**kwargs)
+            if not isinstance(response, str):
+                return response
+            content = response
+        
+        if kwargs.get('stream', False):
+            return MockStreamResponse(content)
+        return MockResponse(MockMessage(content))
+    
+    # Replace the mock create function
+    prepared_mock_dojo.llm_client.chat.completions.create = AsyncMock(side_effect=updated_mock_create)
     
     # Start the conversation loop
     await prepared_mock_dojo.continue_mondo(mondo, max_exchanges=3)
@@ -290,6 +369,9 @@ async def test_mondo_continue_conversation_mock(prepared_mock_dojo, mock_llm_res
     for msg in messages:
         content = await sync_to_async(lambda: msg.content)()
         assert content, "All messages should have content"
+        
+    # Verify we had at least one exchange before ending
+    assert conclusion_check_count > 0, "Should have performed at least one conclusion check"
 
 @pytest.mark.mock
 async def test_mondo_continue_conversation_custom_length_mock(prepared_mock_dojo, mock_llm_responses):
@@ -313,16 +395,56 @@ async def test_mondo_continue_conversation_custom_length_mock(prepared_mock_dojo
         assert content, "All messages should have content"
 
 @pytest.mark.mock
-async def test_mondo_continue_conversation_unlimited_mock(prepared_mock_dojo, mock_llm_responses):
+async def test_mondo_continue_conversation_unlimited_mock(prepared_mock_dojo, mock_llm_responses, mock_llm_client):
     """Test the conversation continuation with no exchange limit."""
     # Begin the mondo
     mondo = await prepared_mock_dojo.mondo()
     
-    # Add mock response for conclusion check that will end after 2 exchanges
-    mock_llm_responses['conclusion_check'] = {
-        'should_end': False,
-        'reason': 'The conversation is still ongoing'
-    }
+    # Get mock classes from the fixture
+    MockStreamResponse = type(await mock_llm_client.chat.completions.create(stream=True, messages=[{"role": "user", "content": "test"}]))
+    MockResponse = type(await mock_llm_client.chat.completions.create(stream=False, messages=[{"role": "user", "content": "test"}]))
+    MockMessage = type((await mock_llm_client.chat.completions.create(stream=False, messages=[{"role": "user", "content": "test"}])).choices[0].message)
+    
+    # Set up mock responses for the conversation to end after a few exchanges
+    mock_llm_responses['conclusion_check'] = [
+        {'should_end': False, 'reason': 'The conversation is still ongoing'},
+        {'should_end': False, 'reason': 'The discussion is developing'},
+        {'should_end': True, 'reason': 'A natural conclusion has been reached'}
+    ]
+    
+    # Track which conclusion check we're on
+    conclusion_check_count = 0
+    
+    # Override the mock_create function to handle sequential conclusion checks
+    async def updated_mock_create(**kwargs):
+        nonlocal conclusion_check_count
+        prompt = kwargs['messages'][0]['content']
+        
+        if "You are a dialogue observer" in prompt:
+            # Get the appropriate conclusion check based on count
+            check = mock_llm_responses['conclusion_check'][min(
+                conclusion_check_count,
+                len(mock_llm_responses['conclusion_check']) - 1
+            )]
+            conclusion_check_count += 1
+            content = json.dumps(check)
+        elif "Respond to this seeker's question" in prompt:
+            content = mock_llm_responses['satori_answer']
+        elif "Respond to this guidance" in prompt:
+            content = mock_llm_responses['ronin_reflection']
+        else:
+            # Use existing mock response logic
+            response = await prepared_mock_dojo.llm_client.chat.completions.create.original(**kwargs)
+            if not isinstance(response, str):
+                return response
+            content = response
+        
+        if kwargs.get('stream', False):
+            return MockStreamResponse(content)
+        return MockResponse(MockMessage(content))
+    
+    # Replace the mock create function
+    prepared_mock_dojo.llm_client.chat.completions.create = AsyncMock(side_effect=updated_mock_create)
     
     # Start the conversation loop with no exchange limit
     await prepared_mock_dojo.continue_mondo(mondo)
@@ -335,3 +457,7 @@ async def test_mondo_continue_conversation_unlimited_mock(prepared_mock_dojo, mo
     for msg in messages:
         content = await sync_to_async(lambda: msg.content)()
         assert content, "All messages should have content"
+        
+    # Verify we had multiple exchanges before ending
+    assert conclusion_check_count > 1, "Should have performed multiple conclusion checks"
+    assert conclusion_check_count <= len(mock_llm_responses['conclusion_check']), "Should have ended within expected exchanges"
