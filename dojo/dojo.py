@@ -6,6 +6,7 @@ from asgiref.sync import sync_to_async
 import json
 import logging
 import asyncio
+from dojo.models import Dojo as DojoModel
 from quests.models import Quest
 from mondos.models import Mondo, RoninMessage, SatoriMessage
 
@@ -14,6 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from dojo.models import Dojo as DojoModel
     from mondos.models import Mondo, Message, RoninMessage, SatoriMessage
     from ronins.models import Ronin as RoninModel
     from satoris.models import Satori as SatoriModel
@@ -331,7 +333,8 @@ class Dojo:
         logger.info(f"Created quest: {quest.id} - {quest.title}")
         
         # Create the mondo
-        mondo = await Mondo.objects.acreate(quest=quest)
+        dojo = await DojoModel.objects.acreate()
+        mondo = await Mondo.objects.acreate(quest=quest, dojo=dojo)
         logger.info(f"Created mondo: {mondo.id}")
         
         # Generate the opening question (shomon)
