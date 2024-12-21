@@ -1,6 +1,6 @@
 from typing import Optional, Any, TYPE_CHECKING
 from asgiref.sync import sync_to_async
-from dojo import Sensei
+from dojo.dojo import Sensei
 from .models import Satori  # DB Model class
 import logging
 

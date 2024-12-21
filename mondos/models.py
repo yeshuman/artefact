@@ -9,6 +9,7 @@ class Mondo(models.Model):
     seeker and master. Here, it represents the exchange between Ronin
     (the seeker) and Satori (the guide) in their journey of discovery.
     """
+    dojo = models.ForeignKey('dojo.Dojo', on_delete=models.CASCADE, related_name='mondos')
     quest = models.ForeignKey('quests.Quest', on_delete=models.CASCADE, related_name='mondos')
     created_at = models.DateTimeField(auto_now_add=True)
 

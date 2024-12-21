@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock
 from openai import AsyncOpenAI
 import json
 from typing import AsyncGenerator, Optional
-from django.db import transaction
 from asgiref.sync import sync_to_async
 
 pytestmark = [pytest.mark.django_db]
@@ -128,13 +127,13 @@ async def real_llm_client():
 @pytest_asyncio.fixture
 async def dojo_with_mock_llm(mock_llm_client):
     """Create a Dojo instance with mock LLM client."""
-    from dojo import Dojo
+    from dojo.dojo import Dojo
     return Dojo(llm_client=mock_llm_client)
 
 @pytest_asyncio.fixture
 async def dojo_with_real_llm(real_llm_client):
     """Create a Dojo instance with real LLM client."""
-    from dojo import Dojo
+    from dojo.dojo import Dojo
     dojo = Dojo(llm_client=real_llm_client)
     yield dojo
     await dojo.cleanup()

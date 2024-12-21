@@ -1,8 +1,8 @@
 from django.db import models
 from django.conf import settings
-import numpy as np
 from django.contrib.postgres.indexes import Index
 from pgvector.django import VectorField
+
 
 class EntityArchetype(models.Model):
     """

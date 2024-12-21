@@ -50,7 +50,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django_htmx',
     'livereload',
-    # 'chats',
+    'dojo',
     'ronins',
     'satoris',
     'quests',
