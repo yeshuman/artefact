@@ -17,9 +17,9 @@ fi
 # PostgreSQL connection string
 PG_CONN="-h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER"
 
-echo -e "${YELLOW}Removing all migrations...${NC}"
-find . -path "*/migrations/*.py" -not -name "__init__.py" -delete
-find . -path "*/migrations/*.pyc" -delete
+echo -e "${YELLOW}Removing migrations (except entities)...${NC}"
+find . -path "*/migrations/*.py" -not -path "./entities/*" -not -name "__init__.py" -delete
+find . -path "*/migrations/*.pyc" -not -path "./entities/*" -delete
 
 echo -e "${YELLOW}Terminating existing database connections...${NC}"
 PGPASSWORD=postgres psql -U postgres -h localhost -c "

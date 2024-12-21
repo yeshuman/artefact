@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     'satoris',
     'quests',
     'mondos',
+    'entities',
 ]
 
 
@@ -103,6 +104,9 @@ DATABASES = {
         'PASSWORD': env('POSTGRES_PASSWORD', default='postgres'),
         'HOST': env('POSTGRES_HOST', default='localhost'),
         'PORT': env('POSTGRES_PORT', default='5432'),
+        'OPTIONS': {
+            'options': '-c search_path=public,vector'
+        }
     }
 }
 
@@ -206,3 +210,6 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Entity Detection Settings
+ENTITY_CONFIDENCE_THRESHOLD = 0.8  # Minimum confidence score for entity detection
