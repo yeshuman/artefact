@@ -40,7 +40,7 @@ class EntityArchetype(models.Model):
         indexes = [
             models.Index(fields=['name']),
             models.Index(fields=['parent']),
-            Index(name='archetype_embedding_idx', fields=['embedding'], opclasses=['ivfflat_ops']),
+            Index(name='archetype_embedding_idx', fields=['embedding'], opclasses=['vector_l2_ops']),
         ]
     
     def __str__(self):
@@ -53,42 +53,26 @@ class EntityArchetype(models.Model):
             return f"{self.parent.full_path}.{self.name}"
         return self.name
 
-class ReferenceEntity(models.Model):
+class EntityReference(models.Model):
     """
-    A reference entity used for vector similarity comparisons.
-    These are dynamically created and managed by the Dojo during conversations.
-    Each reference entity is associated with an archetype that defines its nature.
+    A reference entity represents a canonical form of an entity that can be detected
+    in conversations. It serves as a reference point for entity matching and linking.
     """
-    text = models.CharField(max_length=255, help_text="The reference entity text")
-    archetype = models.ForeignKey(
-        EntityArchetype,
-        on_delete=models.PROTECT,
-        related_name='reference_entities',
-        help_text="The archetype this reference entity belongs to"
-    )
-    embedding = VectorField(
-        dimensions=1536,  # OpenAI ada-002 embedding size
-        help_text="The vector embedding for this reference entity"
-    )
-    mondo = models.ForeignKey(
-        'mondos.Mondo',
-        on_delete=models.CASCADE,
-        related_name='reference_entities',
-        help_text="The mondo that created this reference entity"
-    )
+    text = models.TextField()
+    type = models.CharField(max_length=50)
+    embedding = VectorField(dimensions=1536)  # For OpenAI embeddings
+    mondo = models.ForeignKey('mondos.Mondo', on_delete=models.CASCADE, related_name='entity_references')
     created_at = models.DateTimeField(auto_now_add=True)
-    
+    updated_at = models.DateTimeField(auto_now=True)
+
     class Meta:
-        verbose_name_plural = "reference entities"
         indexes = [
-            models.Index(fields=['text']),
-            models.Index(fields=['archetype']),
-            models.Index(fields=['mondo']),
-            Index(name='reference_embedding_idx', fields=['embedding'], opclasses=['ivfflat_ops']),
+            Index(name='reference_embedding_idx', fields=['embedding'], opclasses=['vector_l2_ops'])
         ]
-    
+        unique_together = ['text', 'type', 'mondo']
+
     def __str__(self):
-        return f"{self.text} ({self.archetype.name})"
+        return f"{self.type}: {self.text}"
 
 class Entity(models.Model):
     """
@@ -118,7 +102,7 @@ class Entity(models.Model):
         help_text="The message containing this entity"
     )
     reference_entity = models.ForeignKey(
-        ReferenceEntity,
+        EntityReference,
         on_delete=models.SET_NULL,
         null=True,
         related_name='detected_entities',
@@ -138,7 +122,7 @@ class Entity(models.Model):
             models.Index(fields=['archetype']),
             models.Index(fields=['message']),
             models.Index(fields=['confidence']),
-            Index(name='entity_embedding_idx', fields=['embedding'], opclasses=['ivfflat_ops']),
+            Index(name='entity_embedding_idx', fields=['embedding'], opclasses=['vector_l2_ops']),
         ]
     
     def __str__(self):
