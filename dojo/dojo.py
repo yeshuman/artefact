@@ -142,7 +142,7 @@ class Dojo:
         
     async def prepare_ronin(
         self,
-        travel_style: Optional[str] = None
+        style: Optional[str] = None
     ) -> 'Ronin':
         """Create or get a Ronin instance."""
         # First, let the Ronin discover their identity through meditation
@@ -154,9 +154,9 @@ class Dojo:
                     "Through deep meditation, discover your identity as a Ronin:\n"
                     "1. Your name (a meaningful Japanese name)\n"
                     "2. Your three main interests in exploring the world\n"
-                    "3. Your preferred style of travel (if not already specified)\n\n"
+                    "3. Your personal style and approach (if not already specified)\n\n"
                     "Consider historical wandering monks, scholars, and artists for inspiration.\n"
-                    "Respond in JSON format with keys: name (string), interests (list), and travel_style (string)"
+                    "Respond in JSON format with keys: name (string), interests (list), and style (string)"
                 )
             }],
             stream=True
@@ -173,6 +173,8 @@ class Dojo:
         
         # Clean and parse the response
         raw_response = ''.join(full_response)
+        logger.info(f"Quest contemplation response:\n{raw_response}")
+        
         cleaned_json = self._clean_json_response(raw_response)
         contemplation = json.loads(cleaned_json)
         
@@ -182,7 +184,7 @@ class Dojo:
             self.ronin_obj = await RoninModel.objects.acreate(
                 name=contemplation['name'],
                 interests=contemplation['interests'],
-                travel_style=travel_style or contemplation['travel_style']
+                style=style or contemplation['style']
             )
         
         # Create the controller instance
@@ -190,7 +192,7 @@ class Dojo:
         self.ronin = Ronin(
             name=contemplation['name'],
             interests=contemplation['interests'],
-            travel_style=travel_style or contemplation['travel_style'],
+            style=style or contemplation['style'],
             model_obj=self.ronin_obj,
             llm_client=self.llm_client
         )
@@ -294,8 +296,8 @@ class Dojo:
                 "role": "system",
                 "content": (
                     f"You are a Ronin named {self.ronin.name} with interests in "
-                    f"{', '.join(self.ronin.interests)} and a {self.ronin.travel_style} "
-                    "travel style.\n\n"
+                    f"{', '.join(self.ronin.interests)} and a {self.ronin.style} "
+                    "approach.\n\n"
                     "Through meditation, envision the quest you wish to undertake. "
                     "What profound question or exploration calls to you?\n\n"
                     "Name this quest in a way that reflects its depth and your seeking nature. "
@@ -453,7 +455,7 @@ class Dojo:
                             "role": "system",
                             "content": (
                                 f"You are Ronin {self.ronin.name}, interested in "
-                                f"{', '.join(self.ronin.interests)} with a {self.ronin.travel_style} "
+                                f"{', '.join(self.ronin.interests)} with a {self.ronin.style} "
                                 "travel style.\n\n"
                                 "Respond to this guidance with reflection and insight."
                             )
@@ -506,8 +508,8 @@ class Dojo:
                 "role": "system",
                 "content": (
                     f"You are a Ronin named {self.ronin.name} with interests in "
-                    f"{', '.join(self.ronin.interests)} and a {self.ronin.travel_style} "
-                    f"travel style. You have named your quest: '{mondo.quest.title}'\n\n"
+                    f"{', '.join(self.ronin.interests)} and a {self.ronin.style} "
+                    f"approach. You have named your quest: '{mondo.quest.title}'\n\n"
                     "Generate a thoughtful opening question that begins your journey of understanding. "
                     "Consider the depth of what you seek to learn and how your interests shape your inquiry."
                 )

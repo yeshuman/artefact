@@ -15,7 +15,7 @@ def mock_llm_responses():
         'ronin_meditation': {
             'name': 'Matsuo Basho',
             'interests': ['haiku poetry', 'mountain temples', 'seasonal changes'],
-            'travel_style': 'contemplative wandering'
+            'style': 'contemplative wandering'
         },
         'satori_meditation': {
             'name': 'Dogen Zenji',
@@ -166,6 +166,7 @@ async def test_dojo_prepare_ronin_mock(dojo_with_mock_llm):
     await dojo.prepare_ronin()
     assert dojo.ronin.name == "Matsuo Basho"
     assert "haiku poetry" in dojo.ronin.interests
+    assert dojo.ronin.style == "contemplative wandering"
 
 @pytest.mark.mock
 async def test_dojo_prepare_satori_mock(dojo_with_mock_llm):

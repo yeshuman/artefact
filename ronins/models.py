@@ -10,8 +10,8 @@ class Ronin(models.Model):
         help_text="List of travel interests",
         null=True
     )
-    travel_style = models.TextField(
-        help_text="Preferred style of travel (e.g., luxury, adventure, cultural)",
+    style = models.TextField(
+        help_text="Personal approach and characteristics",
         null=True
     )
     created_at = models.DateTimeField(auto_now_add=True)
@@ -22,4 +22,4 @@ class Ronin(models.Model):
         verbose_name_plural = "Ronin"
 
     def __str__(self):
-        return f"{self.name} - {self.travel_style} traveler"
+        return f"{self.name} - {self.style} seeker"
