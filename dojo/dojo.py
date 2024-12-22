@@ -383,8 +383,8 @@ class Dojo:
         
         # Create the quest
         quest = await Quest.objects.acreate(
-            ronin=self.ronin.model,
-            satori=self.satori.model,
+            ronin=self.ronin.model_obj,
+            satori=self.satori.model_obj,
             title=quest_title
         )
         logger.info(f"Created quest: {quest.id} - {quest.title}")

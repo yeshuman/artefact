@@ -150,10 +150,9 @@ class Satori(Sensei):
         
         # Create or update DB record
         from satoris.models import Satori as SatoriModel
-        if self.model is None:
-            self.model = await SatoriModel.objects.acreate(
+        if self.model_obj is None:
+            self.model_obj = await SatoriModel.objects.acreate(
                 name=self.name,
                 specialties=self.specialties,
                 teaching_style=self.teaching_style
             )
-            self.model_obj = self.model  # Also set model_obj for compatibility

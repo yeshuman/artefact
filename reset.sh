@@ -17,9 +17,9 @@ fi
 # PostgreSQL connection string
 PG_CONN="-h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER"
 
-echo -e "${YELLOW}Removing migrations (except entities)...${NC}"
-find . -path "*/migrations/*.py" -not -path "./entities/*" -not -name "__init__.py" -delete
-find . -path "*/migrations/*.pyc" -not -path "./entities/*" -delete
+echo -e "${YELLOW}Removing all migrations...${NC}"
+find . -path "*/migrations/*.py" -not -name "__init__.py" -delete
+find . -path "*/migrations/*.pyc" -delete
 
 echo -e "${YELLOW}Terminating existing database connections...${NC}"
 PGPASSWORD=postgres psql -U postgres -h localhost -c "
@@ -37,6 +37,17 @@ PGPASSWORD=postgres dropdb -U postgres -h localhost artefact --if-exists
 
 echo -e "${YELLOW}Creating main database...${NC}"
 PGPASSWORD=postgres createdb -U postgres -h localhost artefact
+
+echo -e "${YELLOW}Creating pgvector extension...${NC}"
+PGPASSWORD=postgres psql -U postgres -h localhost -d artefact -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+echo -e "${YELLOW}Creating test databases...${NC}"
+PGPASSWORD=postgres createdb -U postgres -h localhost test_artefact
+PGPASSWORD=postgres createdb -U postgres -h localhost test_artefact_mock
+
+echo -e "${YELLOW}Creating pgvector extension in test databases...${NC}"
+PGPASSWORD=postgres psql -U postgres -h localhost -d test_artefact -c "CREATE EXTENSION IF NOT EXISTS vector;"
+PGPASSWORD=postgres psql -U postgres -h localhost -d test_artefact_mock -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 echo -e "${YELLOW}Making migrations...${NC}"
 python manage.py makemigrations

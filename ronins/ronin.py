@@ -149,14 +149,13 @@ class Ronin(Sensei):
         
         # Create or update DB record
         from ronins.models import Ronin as RoninModel
-        if self.model is None:
-            self.model = await RoninModel.objects.acreate(
+        if self.model_obj is None:
+            self.model_obj = await RoninModel.objects.acreate(
                 name=self.name,
                 interests=self.interests,
                 style=self.style
             )
-            self.model_obj = self.model  # Also set model_obj for compatibility
-    
+
     async def contemplate_quest(self) -> str:
         """Contemplate and name a quest that aligns with interests and style.
         

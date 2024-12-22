@@ -1,7 +1,6 @@
 from django.db import models
 from django.conf import settings
-from django.contrib.postgres.indexes import Index
-from pgvector.django import VectorField
+from pgvector.django import VectorField, IvfflatIndex, HnswIndex
 
 
 class EntityArchetype(models.Model):
@@ -40,7 +39,13 @@ class EntityArchetype(models.Model):
         indexes = [
             models.Index(fields=['name']),
             models.Index(fields=['parent']),
-            Index(name='archetype_embedding_idx', fields=['embedding'], opclasses=['vector_l2_ops']),
+            HnswIndex(
+                name='archetype_embedding_idx',
+                fields=['embedding'],
+                opclasses=['vector_l2_ops'],
+                m=16,
+                ef_construction=64,
+            )
         ]
     
     def __str__(self):
@@ -66,10 +71,16 @@ class EntityReference(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        indexes = [
-            Index(name='reference_embedding_idx', fields=['embedding'], opclasses=['vector_l2_ops'])
-        ]
         unique_together = ['text', 'type', 'mondo']
+        indexes = [
+            HnswIndex(
+                name='reference_embedding_idx',
+                fields=['embedding'],
+                opclasses=['vector_l2_ops'],
+                m=16,
+                ef_construction=64,
+            )
+        ]
 
     def __str__(self):
         return f"{self.type}: {self.text}"
@@ -122,7 +133,13 @@ class Entity(models.Model):
             models.Index(fields=['archetype']),
             models.Index(fields=['message']),
             models.Index(fields=['confidence']),
-            Index(name='entity_embedding_idx', fields=['embedding'], opclasses=['vector_l2_ops']),
+            HnswIndex(
+                name='entity_embedding_idx',
+                fields=['embedding'],
+                opclasses=['vector_l2_ops'],
+                m=16,
+                ef_construction=64,
+            )
         ]
     
     def __str__(self):
