@@ -118,6 +118,7 @@ class Dojo:
         self.satori_obj = satori_obj
         self.ronin: Optional['Ronin'] = None
         self.satori: Optional['Satori'] = None
+        self.model: Optional[DojoModel] = None
         
     def _clean_json_response(self, response: str) -> str:
         """Clean JSON response from OpenAI that might be wrapped in markdown.
@@ -140,16 +141,81 @@ class Dojo:
             response = '\n'.join(lines)
         return response.strip()
         
+    async def initialize(self) -> None:
+        """Initialize the Dojo's cultural and philosophical context.
+        
+        This method establishes the foundational elements that will shape
+        all interactions within the Dojo, including:
+        - Theme and principles
+        - System messages for personality shaping
+        - Cultural context
+        """
+        # First, let the LLM contemplate the Dojo's essence
+        stream = await self.llm_client.chat.completions.create(
+            model="gpt-4-1106-preview",
+            messages=[{
+                "role": "system",
+                "content": (
+                    "You are a master of Japanese philosophical traditions, "
+                    "particularly Zen Buddhism and its influence on martial arts, "
+                    "arts, and ways of learning.\n\n"
+                    "Create a philosophical framework for a Dojo (道場) - a place of learning "
+                    "where a wandering seeker (Ronin) and enlightened guide (Satori) "
+                    "will engage in dialogue.\n\n"
+                    "Consider:\n"
+                    "1. The atmosphere and theme that will foster deep learning\n"
+                    "2. Core principles that should guide their interaction\n"
+                    "3. How the Ronin should approach their seeking\n"
+                    "4. How the Satori should guide and teach\n\n"
+                    "Respond in JSON format with these keys:\n"
+                    "- theme (string): The overarching atmosphere and focus\n"
+                    "- principles (list): Core principles as short phrases\n"
+                    "- ronin_system_message (string): Guidance for the Ronin's role\n"
+                    "- satori_system_message (string): Guidance for the Satori's role"
+                )
+            }],
+            stream=True
+        )
+        
+        # Collect the response
+        full_response = []
+        async for chunk in stream:
+            if hasattr(chunk.choices[0].delta, 'content'):
+                content_chunk = chunk.choices[0].delta.content
+                if content_chunk:
+                    logger.info(f"Dojo contemplation chunk: {content_chunk}")
+                    full_response.append(content_chunk)
+        
+        # Parse the contemplation
+        raw_response = ''.join(full_response)
+        cleaned_json = self._clean_json_response(raw_response)
+        contemplation = json.loads(cleaned_json)
+        
+        # Create the Dojo model instance
+        self.model = await DojoModel.objects.acreate(
+            theme=contemplation['theme'],
+            principles=contemplation['principles'],
+            ronin_system_message=contemplation['ronin_system_message'],
+            satori_system_message=contemplation['satori_system_message']
+        )
+        logger.info(f"Created Dojo {self.model.id} with theme: {self.model.theme}")
+        
     async def prepare_ronin(
         self,
         style: Optional[str] = None
     ) -> 'Ronin':
         """Create or get a Ronin instance."""
+        if not self.model:
+            raise ValueError("Dojo must be initialized before preparing participants")
+            
         # First, let the Ronin discover their identity through meditation
         stream = await self.llm_client.chat.completions.create(
             model="gpt-4-1106-preview",
             messages=[{
                 "role": "system",
+                "content": self.model.ronin_system_message
+            }, {
+                "role": "user",
                 "content": (
                     "Through deep meditation, discover your identity as a Ronin:\n"
                     "1. Your name (a meaningful Japanese name)\n"
@@ -203,19 +269,24 @@ class Dojo:
         teaching_style: Optional[str] = None
     ) -> 'Satori':
         """Create or get a Satori instance."""
+        if not self.model:
+            raise ValueError("Dojo must be initialized before preparing participants")
+            
         # First, let the Satori discover their identity through meditation
         stream = await self.llm_client.chat.completions.create(
             model="gpt-4-1106-preview",
             messages=[{
                 "role": "system",
+                "content": self.model.satori_system_message
+            }, {
+                "role": "user",
                 "content": (
                     "Through profound meditation, reveal your identity as a Satori:\n"
                     "1. Your name (a meaningful Japanese name)\n"
                     "2. Your three areas of specialty and deep understanding\n"
                     "3. Your natural approach to guiding others (if not already specified)\n\n"
                     "Consider historical Zen masters, teachers, and philosophers for inspiration.\n"
-                    "Respond in JSON format with keys: name (string), specialties (list), and teaching_style (string)\n\n"
-                    "Note: Use American English spelling 'specialties' not 'specialities'"
+                    "Respond in JSON format with keys: name (string), specialties (list), and teaching_style (string)"
                 )
             }],
             stream=True
@@ -285,6 +356,8 @@ class Dojo:
     
     async def mondo(self) -> 'Mondo':
         """Initiate a mondo dialogue between Ronin and Satori."""
+        if not self.model:
+            raise ValueError("Dojo must be initialized before beginning a Mondo")
         if not self.ronin or not self.satori:
             raise ValueError("Both Ronin and Satori must be prepared before beginning a Mondo")
         
@@ -294,6 +367,9 @@ class Dojo:
             model="gpt-4-1106-preview",
             messages=[{
                 "role": "system",
+                "content": self.model.ronin_system_message
+            }, {
+                "role": "user",
                 "content": (
                     f"You are a Ronin named {self.ronin.name} with interests in "
                     f"{', '.join(self.ronin.interests)} and a {self.ronin.style} "
@@ -307,6 +383,7 @@ class Dojo:
             }],
             stream=True
         )
+        
         
         # Collect streamed response
         full_response = []

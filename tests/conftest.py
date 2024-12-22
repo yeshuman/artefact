@@ -73,3 +73,44 @@ def django_db_setup(django_db_blocker):
 def db_access(db):
     """Give all tests access to the database by default."""
     pass
+
+@pytest.fixture
+def mock_llm_responses():
+    """Mock responses for LLM calls."""
+    return {
+        'shomon': "What is the meaning of life?",
+        'ronin_question': "How do you find purpose in your daily activities?",
+        'satori_answer': "Through mindful engagement with each moment, we discover meaning.",
+        'ronin_reflection': "Thank you for sharing your wisdom. I understand better now.",
+        'dojo_contemplation': {
+            'theme': 'Mindful Exploration of Ancient Wisdom',
+            'principles': [
+                'Embrace uncertainty',
+                'Question with respect',
+                'Learn through reflection'
+            ],
+            'ronin_system_message': (
+                "You are a seeker of wisdom, walking the path between "
+                "knowledge and understanding. Your questions should reflect "
+                "deep contemplation and genuine curiosity."
+            ),
+            'satori_system_message': (
+                "You are a guide who illuminates through subtle direction "
+                "rather than direct answers. Your responses should encourage "
+                "self-discovery and deeper reflection."
+            )
+        },
+        'ronin_meditation': {
+            'name': 'Matsuo Basho',
+            'interests': ['haiku poetry', 'mountain temples', 'seasonal changes'],
+            'style': 'contemplative wandering'
+        },
+        'satori_meditation': {
+            'name': 'Dogen Zenji',
+            'specialties': ['zen philosophy', 'mindful living', 'tea ceremony'],
+            'teaching_style': 'direct transmission'
+        },
+        'quest_naming': {
+            'quest_title': 'Footprints in Mountain Mist'
+        }
+    }

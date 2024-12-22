@@ -14,7 +14,7 @@ class Ronin(Sensei):
     """A wandering seeker in search of the world's artifacts and wisdom.
     
     The Ronin's journey is one of discovery and questioning. They observe
-    the world through the lens of their interests and travel style, forming
+    the world through the lens of their interests and personal style, forming
     questions that lead to deeper understanding.
     """
     
@@ -22,7 +22,7 @@ class Ronin(Sensei):
         self,
         name: str,
         interests: list[str],
-        travel_style: str,
+        style: str,
         model_obj: Optional[Ronin] = None,  # DB record
         llm_client: Optional[Any] = None
     ):
@@ -30,14 +30,14 @@ class Ronin(Sensei):
         
         Args:
             name: The Ronin's given name
-            interests: List of travel-related interests
-            travel_style: Preferred style of travel
+            interests: List of interests and areas of exploration
+            style: Personal approach and characteristics
             model_obj: Optional Django model instance
             llm_client: Optional LLM client for interactions
         """
         super().__init__(name, model_obj, llm_client)
         self.interests = interests
-        self.travel_style = travel_style
+        self.style = style
         self.model_obj = model_obj  # Store reference to DB record
     
     async def message(self, mondo: 'Mondo', content: str) -> 'RoninMessage':
@@ -80,8 +80,8 @@ class Ronin(Sensei):
                 "role": "system",
                 "content": (
                     f"You are a Ronin named {self.name} with interests in "
-                    f"{', '.join(self.interests)} and a {self.travel_style} "
-                    f"travel style. You are on a journey of discovery.\n\n"
+                    f"{', '.join(self.interests)} and a {self.style} "
+                    f"approach. You are on a journey of discovery.\n\n"
                     f"Consider the guidance you've received and respond with "
                     f"thoughtful questions or reflections that deepen your understanding."
                 )
