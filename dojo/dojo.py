@@ -69,6 +69,112 @@ class Sensei:
         """
         raise NotImplementedError("Each being must define their own way of messaging")
     
+    async def get_system_prompt(self) -> str:
+        """Get the system prompt for this being.
+        
+        Returns:
+            str: The system prompt for LLM interactions
+            
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
+        raise NotImplementedError("Each being must define their own system prompt")
+    
+    async def get_meditation_prompt(self) -> str:
+        """Get the meditation prompt for self-discovery.
+        
+        Returns:
+            str: The meditation prompt for discovering identity
+            
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
+        raise NotImplementedError("Each being must define their own meditation prompt")
+    
+    async def create_from_meditation(self, meditation_data: Dict[str, Any]) -> None:
+        """Create or update self from meditation data.
+        
+        Args:
+            meditation_data: The parsed meditation response
+            
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
+        raise NotImplementedError("Each being must define how to create from meditation")
+    
+    async def prepare_self(self, system_message: str) -> None:
+        """Discover identity through meditation.
+        
+        Args:
+            system_message: The system message guiding meditation
+        """
+        if not self.llm_client:
+            raise ValueError(f"{self.__class__.__name__} requires an LLM client for meditation")
+        
+        # Get meditation prompt
+        meditation_prompt = await self.get_meditation_prompt()
+        
+        # Stream meditation response
+        meditation_response = await self.stream_llm_response([{
+            "role": "system",
+            "content": system_message
+        }, {
+            "role": "user",
+            "content": meditation_prompt
+        }])
+        
+        # Clean and parse the response
+        try:
+            cleaned_json = self._clean_json_response(meditation_response)
+            meditation_data = json.loads(cleaned_json)
+            logger.info(f"Parsed meditation data:\n{json.dumps(meditation_data, indent=2)}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse meditation response: {meditation_response}")
+            raise
+        
+        # Create or update self from meditation
+        await self.create_from_meditation(meditation_data)
+    
+    def _clean_json_response(self, response: str) -> str:
+        """Clean JSON response that might be wrapped in markdown."""
+        if response.startswith('```') and response.endswith('```'):
+            lines = response.split('\n')
+            lines = lines[1:-1]
+            if lines[0].lower() in ['json', 'javascript']:
+                lines = lines[1:]
+            response = '\n'.join(lines)
+        return response.strip()
+    
+    async def stream_llm_response(self, messages: List[Dict[str, str]], model: str = "gpt-4-1106-preview") -> str:
+        """Stream a response from the LLM and collect the result.
+        
+        Args:
+            messages: List of message dictionaries for the LLM
+            model: The model to use for generation
+            
+        Returns:
+            str: The complete response from the LLM
+        """
+        if not self.llm_client:
+            raise ValueError(f"{self.__class__.__name__} requires an LLM client to formulate responses")
+        
+        stream = await self.llm_client.chat.completions.create(
+            model=model,
+            messages=messages,
+            stream=True
+        )
+        
+        # Collect streamed response
+        response_chunks = []
+        async for chunk in stream:
+            if hasattr(chunk.choices[0].delta, 'content'):
+                content_chunk = chunk.choices[0].delta.content
+                if content_chunk:
+                    logger.info(f"{self.name} response chunk: {content_chunk}")
+                    response_chunks.append(content_chunk)
+        
+        return ''.join(response_chunks)
+    
     async def respond(self, message: 'Message') -> 'Message':
         """Receive a message and formulate a response.
         
@@ -80,11 +186,30 @@ class Sensei:
             
         Returns:
             Message: The response message
-            
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
         """
-        raise NotImplementedError("Each being must define their own way of responding")
+        if not self.llm_client:
+            raise ValueError(f"{self.__class__.__name__} requires an LLM client to formulate responses")
+        
+        # Get message content and mondo safely
+        content = await sync_to_async(lambda: message.content)()
+        mondo = await sync_to_async(lambda: message.mondo)()
+        
+        # Get conversation history
+        messages = [msg async for msg in mondo.messages.all()]
+        history = []
+        for msg in messages:
+            msg_content = await sync_to_async(lambda: msg.content)()
+            msg_author = await sync_to_async(lambda: msg.author.name)()
+            role = "assistant" if isinstance(msg, SatoriMessage) else "user"
+            history.append({"role": role, "content": msg_content})
+        
+        # Get system prompt and generate response
+        system_prompt = await self.get_system_prompt()
+        llm_messages = [{"role": "system", "content": system_prompt}] + history
+        response_content = await self.stream_llm_response(llm_messages)
+        
+        # Create and return the message
+        return await self.message(mondo, response_content)
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} {self.name}"
@@ -208,60 +333,18 @@ class Dojo:
         if not self.model:
             raise ValueError("Dojo must be initialized before preparing participants")
             
-        # First, let the Ronin discover their identity through meditation
-        stream = await self.llm_client.chat.completions.create(
-            model="gpt-4-1106-preview",
-            messages=[{
-                "role": "system",
-                "content": self.model.ronin_system_message
-            }, {
-                "role": "user",
-                "content": (
-                    "Through deep meditation, discover your identity as a Ronin:\n"
-                    "1. Your name (a meaningful Japanese name)\n"
-                    "2. Your three main interests in exploring the world\n"
-                    "3. Your personal style and approach (if not already specified)\n\n"
-                    "Consider historical wandering monks, scholars, and artists for inspiration.\n"
-                    "Respond in JSON format with keys: name (string), interests (list), and style (string)"
-                )
-            }],
-            stream=True
-        )
-        
-        # Collect streamed response
-        full_response = []
-        async for chunk in stream:
-            if hasattr(chunk.choices[0].delta, 'content'):
-                content_chunk = chunk.choices[0].delta.content
-                if content_chunk:
-                    logger.info(f"Ronin meditation chunk: {content_chunk}")
-                    full_response.append(content_chunk)
-        
-        # Clean and parse the response
-        raw_response = ''.join(full_response)
-        logger.info(f"Quest contemplation response:\n{raw_response}")
-        
-        cleaned_json = self._clean_json_response(raw_response)
-        contemplation = json.loads(cleaned_json)
-        
-        # Create or get the DB record
-        from ronins.models import Ronin as RoninModel
-        if self.ronin_obj is None:
-            self.ronin_obj = await RoninModel.objects.acreate(
-                name=contemplation['name'],
-                interests=contemplation['interests'],
-                style=style or contemplation['style']
-            )
-        
         # Create the controller instance
         from ronins.ronin import Ronin
         self.ronin = Ronin(
-            name=contemplation['name'],
-            interests=contemplation['interests'],
-            style=style or contemplation['style'],
+            name="",  # Will be set during meditation
+            interests=[],  # Will be set during meditation
+            style=style or "",  # Will be set during meditation if not provided
             model_obj=self.ronin_obj,
             llm_client=self.llm_client
         )
+        
+        # Let the Ronin discover their identity through meditation
+        await self.ronin.prepare_self(self.model.ronin_system_message)
         return self.ronin
         
     async def prepare_satori(
@@ -272,86 +355,18 @@ class Dojo:
         if not self.model:
             raise ValueError("Dojo must be initialized before preparing participants")
             
-        # First, let the Satori discover their identity through meditation
-        stream = await self.llm_client.chat.completions.create(
-            model="gpt-4-1106-preview",
-            messages=[{
-                "role": "system",
-                "content": self.model.satori_system_message
-            }, {
-                "role": "user",
-                "content": (
-                    "Through profound meditation, reveal your identity as a Satori:\n"
-                    "1. Your name (a meaningful Japanese name)\n"
-                    "2. Your three areas of specialty and deep understanding\n"
-                    "3. Your natural approach to guiding others (if not already specified)\n\n"
-                    "Consider historical Zen masters, teachers, and philosophers for inspiration.\n"
-                    "Respond in JSON format with keys: name (string), specialties (list), and teaching_style (string)"
-                )
-            }],
-            stream=True
-        )
-        
-        # Collect streamed response
-        full_response = []
-        async for chunk in stream:
-            if hasattr(chunk.choices[0].delta, 'content'):
-                content_chunk = chunk.choices[0].delta.content
-                if content_chunk:
-                    logger.info(f"Satori meditation chunk: {content_chunk}")
-                    full_response.append(content_chunk)
-        
-        # Clean and parse the response
-        raw_response = ''.join(full_response)
-        logger.info(f"Raw LLM response:\n{raw_response}")
-        
-        cleaned_json = self._clean_json_response(raw_response)
-        logger.info(f"Cleaned JSON:\n{cleaned_json}")
-        
-        try:
-            meditation = json.loads(cleaned_json)
-            logger.info(f"Parsed meditation data:\n{json.dumps(meditation, indent=2)}")
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON: {e}")
-            raise
-            
-        # Handle British English spelling if present
-        if 'specialities' in meditation and 'specialties' not in meditation:
-            logger.info("Converting British spelling 'specialities' to American 'specialties'")
-            meditation['specialties'] = meditation.pop('specialities')
-            
-        # Log expected vs received keys
-        expected_keys = {'name', 'specialties', 'teaching_style'}
-        received_keys = set(meditation.keys())
-        logger.info(f"Expected keys: {expected_keys}")
-        logger.info(f"Received keys: {received_keys}")
-        
-        if expected_keys != received_keys:
-            logger.warning(f"Missing keys: {expected_keys - received_keys}")
-            logger.warning(f"Extra keys: {received_keys - expected_keys}")
-        
-        # Create or get the Django model instance
-        from satoris.models import Satori as SatoriModel
-        if self.satori_obj is None:
-            try:
-                self.satori_obj = await SatoriModel.objects.acreate(
-                    name=meditation['name'],
-                    specialties=meditation['specialties'],
-                    teaching_style=teaching_style or meditation['teaching_style']
-                )
-            except KeyError as e:
-                logger.error(f"Failed to access required key: {e}")
-                raise
-        
         # Create the Satori instance
         from satoris.satori import Satori
         self.satori = Satori(
-            name=meditation['name'],
-            specialties=meditation['specialties'],
-            teaching_style=teaching_style or meditation['teaching_style'],
+            name="",  # Will be set during meditation
+            specialties=[],  # Will be set during meditation
+            teaching_style=teaching_style or "",  # Will be set during meditation if not provided
             model_obj=self.satori_obj,
             llm_client=self.llm_client
         )
+        
+        # Let the Satori discover their identity through meditation
+        await self.satori.prepare_self(self.model.satori_system_message)
         return self.satori
     
     async def mondo(self) -> 'Mondo':
@@ -363,50 +378,13 @@ class Dojo:
         
         # Let the Ronin contemplate and name their quest
         logger.info(f"Ronin {self.ronin.name} contemplating quest...")
-        stream = await self.llm_client.chat.completions.create(
-            model="gpt-4-1106-preview",
-            messages=[{
-                "role": "system",
-                "content": self.model.ronin_system_message
-            }, {
-                "role": "user",
-                "content": (
-                    f"You are a Ronin named {self.ronin.name} with interests in "
-                    f"{', '.join(self.ronin.interests)} and a {self.ronin.style} "
-                    "approach.\n\n"
-                    "Through meditation, envision the quest you wish to undertake. "
-                    "What profound question or exploration calls to you?\n\n"
-                    "Name this quest in a way that reflects its depth and your seeking nature. "
-                    "Consider the style of titles like 'In Search of Lost Wisdom' or 'The Path Through Ancient Gardens'.\n\n"
-                    "Respond in JSON format with key: quest_title (string)"
-                )
-            }],
-            stream=True
-        )
-        
-        
-        # Collect streamed response
-        full_response = []
-        async for chunk in stream:
-            if hasattr(chunk.choices[0].delta, 'content'):
-                content_chunk = chunk.choices[0].delta.content
-                if content_chunk:
-                    logger.info(f"Quest contemplation chunk: {content_chunk}")
-                    full_response.append(content_chunk)
-        
-        # Clean and parse the response
-        raw_response = ''.join(full_response)
-        logger.info(f"Quest contemplation response:\n{raw_response}")
-        
-        cleaned_json = self._clean_json_response(raw_response)
-        contemplation = json.loads(cleaned_json)
-        quest_title = contemplation['quest_title']
+        quest_title = await self.ronin.contemplate_quest()
         logger.info(f"Quest title: {quest_title}")
         
         # Create the quest
         quest = await Quest.objects.acreate(
-            ronin=self.ronin.model_obj,
-            satori=self.satori.model_obj,
+            ronin=self.ronin.model,
+            satori=self.satori.model,
             title=quest_title
         )
         logger.info(f"Created quest: {quest.id} - {quest.title}")
@@ -422,138 +400,36 @@ class Dojo:
         return mondo
 
     async def continue_mondo(self, mondo: 'Mondo', max_exchanges: Optional[int] = None) -> None:
-        """Continue an existing mondo dialogue."""
+        """Continue the Mondo dialogue until the Ronin reaches understanding or max exchanges.
+        
+        Args:
+            mondo: The Mondo dialogue to continue
+            max_exchanges: Optional maximum number of exchanges (for testing)
+        """
+        if not self.ronin or not self.satori:
+            raise ValueError("Both Ronin and Satori must be prepared before continuing a Mondo")
+        
+        exchanges = 0
         try:
-            exchanges = 0
-            
             while True:
-                # Get the latest message and its attributes safely
-                latest_message = await sync_to_async(lambda: mondo.messages.last())()
-                if not latest_message:
-                    logger.error("No messages found in mondo")
-                    break
-                
+                # Get latest message
+                latest_message = await sync_to_async(lambda: mondo.messages.latest())()
                 content = await sync_to_async(lambda: latest_message.content)()
-                author = await sync_to_async(lambda: latest_message.author)()
-                author_name = await sync_to_async(lambda: author.name)()
                 
-                exchange_info = f"Exchange {exchanges + 1}"
-                if max_exchanges is not None:
-                    exchange_info += f"/{max_exchanges}"
-                logger.info(exchange_info)
-                logger.info(f"Latest message from {author_name}:\n{content}")
+                # Let the Ronin contemplate their understanding
+                ronin_decision = await self.ronin.contemplate_understanding(content)
                 
-                # Ask LLM if the conversation has reached a natural conclusion
-                logger.info("Checking for natural conclusion...")
-                stream = await self.llm_client.chat.completions.create(
-                    model="gpt-4-1106-preview",
-                    messages=[{
-                        "role": "system",
-                        "content": (
-                            "You are a dialogue observer analyzing if a conversation has reached a natural conclusion.\n\n"
-                            "Consider these factors:\n"
-                            "1. A moment of understanding has been reached\n"
-                            "2. The initial question has been thoroughly explored\n"
-                            "3. A natural ending point has emerged\n\n"
-                            "IMPORTANT: You must respond with ONLY a JSON object in this exact format:\n"
-                            "{\n"
-                            '  "should_end": false,\n'
-                            '  "reason": "Explanation of why the conversation should or should not end"\n'
-                            "}\n\n"
-                            "Do not include any other text or explanation outside the JSON object."
-                        )
-                    }, {
-                        "role": "user",
-                        "content": content
-                    }],
-                    stream=True
-                )
-                
-                # Collect streamed response
-                full_response = []
-                async for chunk in stream:
-                    if hasattr(chunk.choices[0].delta, 'content'):
-                        content_chunk = chunk.choices[0].delta.content
-                        if content_chunk:
-                            logger.info(f"Conclusion check chunk: {content_chunk}")
-                            full_response.append(content_chunk)
-                
-                try:
-                    raw_response = ''.join(full_response)
-                    cleaned_json = self._clean_json_response(raw_response)
-                    conclusion = json.loads(cleaned_json)
-                    logger.info(f"Conclusion check: {json.dumps(conclusion, indent=2)}")
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse conclusion check response: {raw_response}")
-                    raise
-                
-                if conclusion["should_end"]:
-                    logger.info(f"Mondo concluding: {conclusion['reason']}")
+                if ronin_decision["should_end"]:
+                    logger.info(f"Ronin concludes: {ronin_decision['reason']}")
                     break
                 
                 # Determine next speaker based on last message
                 if isinstance(latest_message, RoninMessage):
                     logger.info("Satori's turn to respond...")
-                    # Stream Satori's response
-                    stream = await self.llm_client.chat.completions.create(
-                        model="gpt-4-1106-preview",
-                        messages=[{
-                            "role": "system",
-                            "content": (
-                                f"You are Satori {self.satori.name}, a guide with expertise in "
-                                f"{', '.join(self.satori.specialties)}. Your teaching style is: "
-                                f"{self.satori.teaching_style}\n\n"
-                                "Respond to this seeker's question with wisdom and insight."
-                            )
-                        }, {
-                            "role": "user",
-                            "content": content
-                        }],
-                        stream=True
-                    )
-                    
-                    full_response = []
-                    async for chunk in stream:
-                        if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
-                            content_chunk = chunk.choices[0].delta.content
-                            if content_chunk:
-                                logger.info(f"Satori response chunk: {content_chunk}")
-                                full_response.append(content_chunk)
-                    
-                    response_content = ''.join(full_response)
-                    response = await self.satori.message(mondo, response_content)
-                    logger.info(f"Satori {self.satori.name} completed response")
+                    await self.satori.respond(latest_message)
                 else:
                     logger.info("Ronin's turn to respond...")
-                    # Stream Ronin's response
-                    stream = await self.llm_client.chat.completions.create(
-                        model="gpt-4-1106-preview",
-                        messages=[{
-                            "role": "system",
-                            "content": (
-                                f"You are Ronin {self.ronin.name}, interested in "
-                                f"{', '.join(self.ronin.interests)} with a {self.ronin.style} "
-                                "travel style.\n\n"
-                                "Respond to this guidance with reflection and insight."
-                            )
-                        }, {
-                            "role": "user",
-                            "content": content
-                        }],
-                        stream=True
-                    )
-                    
-                    full_response = []
-                    async for chunk in stream:
-                        if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
-                            content_chunk = chunk.choices[0].delta.content
-                            if content_chunk:
-                                logger.info(f"Ronin response chunk: {content_chunk}")
-                                full_response.append(content_chunk)
-                    
-                    response_content = ''.join(full_response)
-                    response = await self.ronin.message(mondo, response_content)
-                    logger.info(f"Ronin {self.ronin.name} completed response")
+                    await self.ronin.respond(latest_message)
                 
                 exchanges += 1
                 if max_exchanges is not None and exchanges >= max_exchanges:
@@ -578,42 +454,25 @@ class Dojo:
         Args:
             mondo: The mondo instance for this dialogue
         """
-        # Use the LLM to generate an appropriate opening question
-        stream = await self.llm_client.chat.completions.create(
-            model="gpt-4-1106-preview",
-            messages=[{
-                "role": "system",
-                "content": (
-                    f"You are a Ronin named {self.ronin.name} with interests in "
-                    f"{', '.join(self.ronin.interests)} and a {self.ronin.style} "
-                    f"approach. You have named your quest: '{mondo.quest.title}'\n\n"
-                    "Generate a thoughtful opening question that begins your journey of understanding. "
-                    "Consider the depth of what you seek to learn and how your interests shape your inquiry."
-                )
-            }],
-            stream=True
+        # Use the Ronin's LLM interaction methods to generate the opening question
+        system_prompt = (
+            f"You are a Ronin named {self.ronin.name} with interests in "
+            f"{', '.join(self.ronin.interests)} and a {self.ronin.style} "
+            f"approach. You have named your quest: '{mondo.quest.title}'\n\n"
+            "Generate a thoughtful opening question that begins your journey of understanding. "
+            "Consider the depth of what you seek to learn and how your interests shape your inquiry."
         )
         
-        # Get the generated question
-        logger.info(f"Ronin {self.ronin.name} composing shomon...")
-        shomon_chunks = []
-        async for chunk in stream:
-            if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
-                content_chunk = chunk.choices[0].delta.content
-                if content_chunk:
-                    logger.info(f"Shomon chunk: {content_chunk}")
-                    shomon_chunks.append(content_chunk)
+        # Get the generated question using the Ronin's stream method
+        shomon_content = await self.ronin.stream_llm_response([{
+            "role": "system",
+            "content": system_prompt
+        }])
         
-        shomon_content = ''.join(shomon_chunks)
         logger.info(f"Ronin {self.ronin.name} opens the Mondo with completed shomon:\n{shomon_content}")
         
-        # Create the shomon message
-        from mondos.models import RoninMessage
-        await RoninMessage.objects.acreate(
-            mondo=mondo,
-            content=shomon_content,
-            author=self.ronin_obj
-        )
+        # Create the shomon message using the Ronin's message method
+        await self.ronin.message(mondo, shomon_content)
         logger.info(f"Shomon message recorded for Mondo {mondo.id}")
 
     async def cleanup(self) -> None:

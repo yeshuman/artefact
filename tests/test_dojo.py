@@ -52,10 +52,27 @@ def mock_llm_responses():
         'quest_naming': {
             'quest_title': 'Footprints in Mountain Mist'
         },
+        'quest_contemplation': {
+            'quest_title': 'Footprints in Mountain Mist'
+        },
         'shomon': "How do the changing seasons reflect the impermanence of our journey?",
         'ronin_question': "What lessons can we learn from the changing autumn leaves?",
         'satori_answer': "As leaves fall, they teach us about letting go with grace. Each descent is a lesson in impermanence.",
-        'ronin_reflection': "The leaves don't resist their falling - perhaps there is wisdom in acceptance."
+        'ronin_reflection': "The leaves don't resist their falling - perhaps there is wisdom in acceptance.",
+        'understanding_contemplation': [
+            {
+                'should_end': False,
+                'reason': "I sense there are deeper layers to explore in this metaphor of seasonal change."
+            },
+            {
+                'should_end': False,
+                'reason': "The interplay between resistance and acceptance intrigues me further."
+            },
+            {
+                'should_end': True,
+                'reason': "I have found peace in understanding the natural flow of change."
+            }
+        ]
     }
 
 @pytest_asyncio.fixture
@@ -70,11 +87,13 @@ async def mock_llm_client(mock_llm_responses):
     chat_mock.completions = completions_mock
     
     # Track conversation state
-    dialogue_check_count = 0
-    exchange_count = 0
-    message_count = 0
-    last_speaker = None
-    should_end = False
+    state = {
+        'dialogue_check_count': 0,
+        'exchange_count': 0,
+        'message_count': 0,
+        'last_speaker': None,
+        'understanding_index': 0
+    }
     
     class MockDelta:
         def __init__(self, content: Optional[str] = None):
@@ -107,8 +126,6 @@ async def mock_llm_client(mock_llm_responses):
             return self._chunks.pop(0)
     
     async def mock_create(**kwargs):
-        nonlocal dialogue_check_count, exchange_count, message_count, last_speaker, should_end
-        
         # Get the prompt content
         system_content = kwargs['messages'][0]['content']
         user_content = kwargs['messages'][1]['content'] if len(kwargs['messages']) > 1 else None
@@ -124,60 +141,47 @@ async def mock_llm_client(mock_llm_responses):
             response_content = json.dumps(mock_llm_responses['satori_meditation'])
         elif "Name this quest" in (user_content or ''):
             response_content = json.dumps(mock_llm_responses['quest_naming'])
+        elif "Through meditation, envision the quest" in system_content:
+            response_content = json.dumps(mock_llm_responses['quest_contemplation'])
         elif "Generate a thoughtful opening question" in system_content:
             response_content = mock_llm_responses['shomon']
-            message_count += 1
-            last_speaker = 'ronin'
-            logger.debug(f"Message {message_count}: Shomon question")
+            state['message_count'] += 1
+            state['last_speaker'] = 'ronin'
+            logger.debug(f"Message {state['message_count']}: Shomon question")
+        elif "Have you reached a state of understanding" in system_content:
+            # Only end after we've had enough exchanges
+            should_end = state['exchange_count'] >= 3
+            response_content = json.dumps({
+                'should_end': should_end,
+                'reason': (
+                    "I have found peace in understanding the natural flow of change"
+                    if should_end else
+                    "I sense there are deeper layers to explore in this metaphor of seasonal change"
+                )
+            })
+            logger.debug(f"Understanding check: exchanges={state['exchange_count']}, should_end={should_end}")
         elif "Respond to this seeker's question" in system_content:
             # Satori's response
-            if message_count < 7:  # Only respond if we haven't reached 7 messages
-                response_content = mock_llm_responses['satori_answer']
-                message_count += 1
-                last_speaker = 'satori'
-                logger.debug(f"Message {message_count}: Satori answers (exchange {exchange_count})")
-                if message_count >= 7:
-                    should_end = True
-                    logger.debug("Reached 7 messages, setting should_end=True")
-            else:
-                logger.debug("Would give Satori answer but already at 7 messages")
-                should_end = True
-        elif "Respond to this guidance" in system_content:
+            response_content = mock_llm_responses['satori_answer']
+            state['message_count'] += 1
+            state['last_speaker'] = 'satori'
+            logger.debug(f"Message {state['message_count']}: Satori answers (exchange {state['exchange_count']})")
+        elif "Respond to this guidance" in system_content or "Consider the full context" in system_content:
             # Ronin's response
-            if message_count < 6:  # We want exactly 7 messages
-                response_content = mock_llm_responses['ronin_question']
-                message_count += 1
-                last_speaker = 'ronin'
-                exchange_count += 1
-                logger.debug(f"Message {message_count}: Ronin asks question (exchange {exchange_count})")
-            else:
-                logger.debug("Would give Ronin question but already at 6 messages")
-                should_end = True
-        elif "You are a dialogue observer" in system_content:
-            # After 3 exchanges or 7 messages, end the conversation
-            dialogue_check_count += 1
-            if should_end or message_count >= 7:
-                response_content = json.dumps({
-                    'should_end': True,
-                    'reason': 'A natural conclusion has been reached'
-                })
-            else:
-                response_content = json.dumps({
-                    'should_end': False,
-                    'reason': 'The conversation is still ongoing'
-                })
-            logger.debug(f"Dialogue check {dialogue_check_count}: messages={message_count}, exchanges={exchange_count}, should_end={should_end}")
+            response_content = mock_llm_responses['ronin_question']
+            state['message_count'] += 1
+            state['last_speaker'] = 'ronin'
+            state['exchange_count'] += 1
+            logger.debug(f"Message {state['message_count']}: Ronin asks question (exchange {state['exchange_count']})")
         
         if response_content is None:
-            # Instead of returning "No matching mock response", set should_end=True
-            should_end = True
             logger.debug("No mock response available, setting should_end=True")
             response_content = json.dumps({
                 'should_end': True,
-                'reason': 'A natural conclusion has been reached'
+                'reason': 'The Ronin has concluded their inquiry'
             })
         
-        logger.debug(f"Current state - Messages: {message_count}, Exchanges: {exchange_count}, Last speaker: {last_speaker}, Should end: {should_end}")
+        logger.debug(f"Current state - Messages: {state['message_count']}, Exchanges: {state['exchange_count']}, Last speaker: {state['last_speaker']}")
         
         # Return streamed response if streaming is requested
         if kwargs.get('stream', False):

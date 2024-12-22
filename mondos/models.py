@@ -28,6 +28,7 @@ class Message(PolymorphicModel):
 
     class Meta:
         ordering = ['created_at']
+        get_latest_by = 'created_at'
 
     def __str__(self):
         return f"{self.content[:50]}..."
