@@ -89,14 +89,7 @@ class Ronin(Sensei):
             model="gpt-4-1106-preview",
             messages=[{
                 "role": "system",
-                "content": (
-                    f"You are a Ronin named {self.name} with interests in "
-                    f"{', '.join(self.interests)} and a {self.style} "
-                    f"approach. You are on a journey of discovery.\n\n"
-                    f"Consider the full context of your conversation so far and "
-                    f"respond with thoughtful questions or reflections that deepen "
-                    f"your understanding."
-                )
+                "content": await self.get_system_prompt()
             }] + history,
             stream=True
         )
@@ -119,8 +112,17 @@ class Ronin(Sensei):
         Returns:
             str: The system prompt for LLM interactions
         """
+        if self.model_obj and self.model_obj.system_prompt:
+            # Use stored dynamic prompt with interpolated values
+            return self.model_obj.system_prompt.format(
+                name=self.name,
+                interests=', '.join(self.interests),
+                style=self.style
+            )
+        
+        # Fallback to default prompt
         return (
-            f"You are a Ronin named {self.name} with interests in "
+            f"You are a seeker named {self.name} with interests in "
             f"{', '.join(self.interests)} and a {self.style} "
             f"approach. You are on a journey of discovery.\n\n"
             f"Consider the full context of your conversation so far and "
@@ -130,12 +132,16 @@ class Ronin(Sensei):
     
     async def get_meditation_prompt(self) -> str:
         """Get the meditation prompt for Ronin self-discovery."""
+        if self.model_obj and self.model_obj.meditation_prompt:
+            return self.model_obj.meditation_prompt
+            
+        # Fallback to default prompt
         return (
-            "Through deep meditation, discover your identity as a Ronin:\n"
-            "1. Your name (a meaningful Japanese name)\n"
-            "2. Your three main interests in exploring the world\n"
+            "Through deep meditation, discover your identity as a seeker:\n"
+            "1. Your name (a meaningful name that fits the dojo's theme)\n"
+            "2. Your three main interests in exploring and learning\n"
             "3. Your personal style and approach (if not already specified)\n\n"
-            "Consider historical wandering monks, scholars, and artists for inspiration.\n"
+            "Consider the dojo's theme and cultural context for inspiration.\n"
             "Respond in JSON format with keys: name (string), interests (list), and style (string)"
         )
     
@@ -155,24 +161,25 @@ class Ronin(Sensei):
                 interests=self.interests,
                 style=self.style
             )
+        else:
+            self.model_obj.name = self.name
+            self.model_obj.interests = self.interests
+            self.model_obj.style = self.style
+            await sync_to_async(self.model_obj.save)()
 
     async def contemplate_quest(self) -> str:
-        """Contemplate and name a quest that aligns with interests and style.
-        
-        Returns:
-            str: The title of the contemplated quest
-        """
+        """Contemplate and name a quest that aligns with interests and style."""
         # Stream quest contemplation
         quest_response = await self.stream_llm_response([{
             "role": "system",
+            "content": await self.get_system_prompt()
+        }, {
+            "role": "user",
             "content": (
-                f"You are a Ronin named {self.name} with interests in "
-                f"{', '.join(self.interests)} and a {self.style} "
-                "approach.\n\n"
                 "Through meditation, envision the quest you wish to undertake. "
                 "What profound question or exploration calls to you?\n\n"
                 "Name this quest in a way that reflects its depth and your seeking nature. "
-                "Consider the style of titles like 'In Search of Lost Wisdom' or 'The Path Through Ancient Gardens'.\n\n"
+                "Consider the style of titles that would fit the dojo's theme.\n\n"
                 "Respond in JSON format with key: quest_title (string)"
             )
         }])

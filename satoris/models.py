@@ -2,15 +2,23 @@ from django.db import models
 
 
 class Satori(models.Model):
-    """An enlightened guide who illuminates the world's artifacts with wisdom"""
+    """A guide who illuminates the path to understanding"""
     
     name = models.CharField(max_length=100)
     specialties = models.JSONField(
         default=list,
-        help_text="Areas of expertise (e.g., historical sites, cultural experiences)"
+        help_text="Areas of expertise"
     )
     teaching_style = models.TextField(
         help_text="Natural approach to guiding others",
+        null=True
+    )
+    system_prompt = models.TextField(
+        help_text="Dynamic system prompt based on dojo theme",
+        null=True
+    )
+    meditation_prompt = models.TextField(
+        help_text="Dynamic meditation prompt based on dojo theme",
         null=True
     )
     created_at = models.DateTimeField(auto_now_add=True)

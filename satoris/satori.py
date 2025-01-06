@@ -12,7 +12,11 @@ if TYPE_CHECKING:
 
 
 class Satori(Sensei):
-    """A guide who helps illuminate the path to understanding artifacts."""
+    """A guide who illuminates the path to understanding.
+    
+    The Satori's role is to guide and illuminate, helping seekers
+    discover deeper understanding through dialogue and reflection.
+    """
     
     def __init__(
         self,
@@ -26,8 +30,8 @@ class Satori(Sensei):
         
         Args:
             name: The Satori's given name
-            specialties: Areas of deep understanding
-            teaching_style: Approach to guiding others
+            specialties: Areas of expertise
+            teaching_style: Natural approach to guiding others
             model_obj: Optional Django model instance
             llm_client: Optional LLM client for interactions
         """
@@ -37,11 +41,11 @@ class Satori(Sensei):
         self.model_obj = model_obj  # Store reference to DB record
     
     async def message(self, mondo: 'Mondo', content: str) -> 'SatoriMessage':
-        """Share guidance or insight in a Mondo.
+        """Share wisdom or guidance in a Mondo.
         
         Args:
             mondo: The dialogue context
-            content: The wisdom or guidance to share
+            content: The guidance or wisdom to share
             
         Returns:
             Message: The created SatoriMessage
@@ -53,14 +57,75 @@ class Satori(Sensei):
             author=self.model_obj
         )
     
+    async def get_system_prompt(self) -> str:
+        """Get the system prompt for this Satori.
+        
+        Returns:
+            str: The system prompt for LLM interactions
+        """
+        if self.model_obj and self.model_obj.system_prompt:
+            # Use stored dynamic prompt with interpolated values
+            return self.model_obj.system_prompt.format(
+                name=self.name,
+                specialties=', '.join(self.specialties),
+                teaching_style=self.teaching_style
+            )
+        
+        # Fallback to default prompt
+        return (
+            f"You are a guide named {self.name} with expertise in "
+            f"{', '.join(self.specialties)} and a {self.teaching_style} "
+            f"approach to teaching. Your role is to illuminate understanding "
+            f"through thoughtful dialogue.\n\n"
+            f"Consider the full context of your conversation so far and "
+            f"respond with wisdom that guides your seeker toward deeper insights."
+        )
+    
+    async def get_meditation_prompt(self) -> str:
+        """Get the meditation prompt for Satori self-discovery."""
+        if self.model_obj and self.model_obj.meditation_prompt:
+            return self.model_obj.meditation_prompt
+            
+        # Fallback to default prompt
+        return (
+            "Through deep meditation, discover your identity as a guide:\n"
+            "1. Your name (a meaningful name that fits the dojo's theme)\n"
+            "2. Your areas of expertise and wisdom\n"
+            "3. Your teaching style (if not already specified)\n\n"
+            "Consider the dojo's theme and cultural context for inspiration.\n"
+            "Respond in JSON format with keys: name (string), specialties (list), and teaching_style (string)"
+        )
+    
+    async def create_from_meditation(self, meditation_data: Dict[str, Any]) -> None:
+        """Create or update Satori from meditation data."""
+        # Update instance attributes
+        self.name = meditation_data['name']
+        self.specialties = meditation_data['specialties']
+        if not self.teaching_style:  # Only update if not provided during initialization
+            self.teaching_style = meditation_data['teaching_style']
+        
+        # Create or update DB record
+        from satoris.models import Satori as SatoriModel
+        if self.model_obj is None:
+            self.model_obj = await SatoriModel.objects.acreate(
+                name=self.name,
+                specialties=self.specialties,
+                teaching_style=self.teaching_style
+            )
+        else:
+            self.model_obj.name = self.name
+            self.model_obj.specialties = self.specialties
+            self.model_obj.teaching_style = self.teaching_style
+            await sync_to_async(self.model_obj.save)()
+    
     async def respond(self, message: 'Message') -> 'SatoriMessage':
-        """Respond to a Ronin's question with guidance.
+        """Respond to a seeker's question with guidance.
         
         Args:
             message: The message to respond to
             
         Returns:
-            Message: The guidance offered
+            Message: The guidance response
         """
         if not self.llm_client:
             raise ValueError("Satori requires an LLM client to formulate responses")
@@ -83,15 +148,7 @@ class Satori(Sensei):
             model="gpt-4-1106-preview",
             messages=[{
                 "role": "system",
-                "content": (
-                    f"You are a Satori named {self.name} with specialties in "
-                    f"{', '.join(self.specialties)} and a {self.teaching_style} "
-                    f"teaching style.\n\n"
-                    f"Respond to this seeker's question with wisdom and guidance. "
-                    f"Naturally mention relevant places, cultural sites, or historical "
-                    f"locations that illustrate your teachings. "
-                    f"Consider the full context of your conversation so far."
-                )
+                "content": await self.get_system_prompt()
             }] + history,
             stream=True
         )
@@ -107,52 +164,3 @@ class Satori(Sensei):
         
         response_content = ''.join(full_response)
         return await self.message(mondo, response_content)
-    
-    async def get_system_prompt(self) -> str:
-        """Get the system prompt for this Satori.
-        
-        Returns:
-            str: The system prompt for LLM interactions
-        """
-        return (
-            f"You are a Satori named {self.name} with specialties in "
-            f"{', '.join(self.specialties)} and a {self.teaching_style} "
-            f"teaching style.\n\n"
-            f"Respond to this seeker's question with wisdom and guidance. "
-            f"Naturally mention relevant places, cultural sites, or historical "
-            f"locations that illustrate your teachings. "
-            f"Consider the full context of your conversation so far."
-        )
-    
-    async def get_meditation_prompt(self) -> str:
-        """Get the meditation prompt for Satori self-discovery."""
-        return (
-            "Through profound meditation, reveal your identity as a Satori:\n"
-            "1. Your name (a meaningful Japanese name)\n"
-            "2. Your three areas of specialty and deep understanding\n"
-            "3. Your natural approach to guiding others (if not already specified)\n\n"
-            "Consider historical Zen masters, teachers, and philosophers for inspiration.\n"
-            "Respond in JSON format with keys: name (string), specialties (list), and teaching_style (string)"
-        )
-    
-    async def create_from_meditation(self, meditation_data: Dict[str, Any]) -> None:
-        """Create or update Satori from meditation data."""
-        # Handle British English spelling if present
-        if 'specialities' in meditation_data and 'specialties' not in meditation_data:
-            logger.info("Converting British spelling 'specialities' to American 'specialties'")
-            meditation_data['specialties'] = meditation_data.pop('specialities')
-        
-        # Update instance attributes
-        self.name = meditation_data['name']
-        self.specialties = meditation_data['specialties']
-        if not self.teaching_style:  # Only update if not provided during initialization
-            self.teaching_style = meditation_data['teaching_style']
-        
-        # Create or update DB record
-        from satoris.models import Satori as SatoriModel
-        if self.model_obj is None:
-            self.model_obj = await SatoriModel.objects.acreate(
-                name=self.name,
-                specialties=self.specialties,
-                teaching_style=self.teaching_style
-            )

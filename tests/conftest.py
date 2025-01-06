@@ -104,14 +104,48 @@ def mock_llm_responses():
         'ronin_meditation': {
             'name': 'Matsuo Basho',
             'interests': ['haiku poetry', 'mountain temples', 'seasonal changes'],
-            'style': 'contemplative wandering'
+            'style': 'contemplative wandering',
+            'theme': 'Mindful Exploration of Ancient Wisdom',
+            'system_prompt': (
+                "You are a seeker of wisdom, walking the path between "
+                "knowledge and understanding. Your questions should reflect "
+                "deep contemplation and genuine curiosity."
+            ),
+            'meditation_prompt': (
+                "In the spirit of mindful exploration, reflect on your role "
+                "as a seeker of ancient wisdom."
+            )
         },
         'satori_meditation': {
             'name': 'Dogen Zenji',
             'specialties': ['zen philosophy', 'mindful living', 'tea ceremony'],
-            'teaching_style': 'direct transmission'
+            'teaching_style': 'direct transmission',
+            'theme': 'Mindful Exploration of Ancient Wisdom',
+            'system_prompt': (
+                "You are a guide who illuminates through subtle direction "
+                "rather than direct answers. Your responses should encourage "
+                "self-discovery and deeper reflection."
+            ),
+            'meditation_prompt': (
+                "In the spirit of mindful exploration, reflect on your role "
+                "as a guide to ancient wisdom."
+            )
         },
         'quest_naming': {
             'quest_title': 'Footprints in Mountain Mist'
-        }
+        },
+        'understanding_contemplation': [
+            {
+                'should_end': False,
+                'reason': "I sense there is more to learn about finding purpose through mindfulness."
+            },
+            {
+                'should_end': False,
+                'reason': "The connection between acceptance and understanding intrigues me further."
+            },
+            {
+                'should_end': True,
+                'reason': "Through our dialogue, I have gained a deeper understanding of how mindful presence reveals life's purpose."
+            }
+        ]
     }

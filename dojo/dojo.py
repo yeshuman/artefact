@@ -271,7 +271,7 @@ class Dojo:
         
         This method establishes the foundational elements that will shape
         all interactions within the Dojo, including:
-        - Theme and principles
+        - Theme and principles from any culture or time period
         - System messages for personality shaping
         - Cultural context
         """
@@ -281,22 +281,29 @@ class Dojo:
             messages=[{
                 "role": "system",
                 "content": (
-                    "You are a master of Japanese philosophical traditions, "
-                    "particularly Zen Buddhism and its influence on martial arts, "
-                    "arts, and ways of learning.\n\n"
-                    "Create a philosophical framework for a Dojo (道場) - a place of learning "
-                    "where a wandering seeker (Ronin) and enlightened guide (Satori) "
-                    "will engage in dialogue.\n\n"
+                    "You are a master of cultural synthesis, deeply versed in traditions, "
+                    "philosophies, and ways of learning from all cultures and time periods.\n\n"
+                    "Create a unique philosophical framework for a Dojo (道場) (a place of learning) "
+                    "where a seeker and guide will engage in dialogue. You can draw from ANY "
+                    "cultural tradition, time period, or philosophical system - ancient or modern, "
+                    "Eastern or Western, traditional or contemporary.\n\n"
+                    "Examples of themes you might choose:\n"
+                    "- A Gen-Z coding bootcamp with meme culture and modern tech philosophy\n"
+                    "- An ancient Greek symposium with Socratic dialogue\n"
+                    "- A Zen monastery in medieval Japan\n"
+                    "- A Silicon Valley startup's mentorship program\n"
+                    "- A Renaissance Italian artist's workshop\n"
+                    "- A contemporary African storytelling circle\n\n"
                     "Consider:\n"
-                    "1. The atmosphere and theme that will foster deep learning\n"
-                    "2. Core principles that should guide their interaction\n"
-                    "3. How the Ronin should approach their seeking\n"
-                    "4. How the Satori should guide and teach\n\n"
+                    "1. What unique atmosphere and theme will foster deep learning?\n"
+                    "2. What principles should guide their interaction?\n"
+                    "3. How should the seeker approach their learning?\n"
+                    "4. How should the guide approach their teaching?\n\n"
                     "Respond in JSON format with these keys:\n"
-                    "- theme (string): The overarching atmosphere and focus\n"
+                    "- theme (string): The overarching atmosphere and cultural context\n"
                     "- principles (list): Core principles as short phrases\n"
-                    "- ronin_system_message (string): Guidance for the Ronin's role\n"
-                    "- satori_system_message (string): Guidance for the Satori's role"
+                    "- ronin_system_message (string): Guidance for the seeker's role\n"
+                    "- satori_system_message (string): Guidance for the guide's role"
                 )
             }],
             stream=True
@@ -343,6 +350,48 @@ class Dojo:
             llm_client=self.llm_client
         )
         
+        # Generate dynamic prompts based on dojo theme
+        if self.ronin_obj:
+            # Get dynamic prompts from LLM
+            stream = await self.llm_client.chat.completions.create(
+                model="gpt-4-1106-preview",
+                messages=[{
+                    "role": "system",
+                    "content": (
+                        f"You are crafting prompts for an AI that will roleplay as a seeker "
+                        f"in our dojo. The dojo's theme is:\n{self.model.theme}\n\n"
+                        f"The core principles are:\n" + 
+                        "\n".join(f"- {p}" for p in self.model.principles) +
+                        "\n\nCreate two prompts:\n"
+                        "1. A system prompt that guides the AI's responses\n"
+                        "2. A meditation prompt for initial identity discovery\n\n"
+                        "The prompts should fit the cultural context and theme. "
+                        "They must support variable interpolation for: {name}, {interests}, and {style}.\n\n"
+                        "Respond in JSON format with keys:\n"
+                        "- system_prompt (string)\n"
+                        "- meditation_prompt (string)"
+                    )
+                }],
+                stream=True
+            )
+            
+            # Collect the response
+            full_response = []
+            async for chunk in stream:
+                if hasattr(chunk.choices[0].delta, 'content'):
+                    content_chunk = chunk.choices[0].delta.content
+                    if content_chunk:
+                        full_response.append(content_chunk)
+            
+            # Parse and store the prompts
+            raw_response = ''.join(full_response)
+            cleaned_json = self._clean_json_response(raw_response)
+            prompts = json.loads(cleaned_json)
+            
+            self.ronin_obj.system_prompt = prompts['system_prompt']
+            self.ronin_obj.meditation_prompt = prompts['meditation_prompt']
+            await sync_to_async(self.ronin_obj.save)()
+        
         # Let the Ronin discover their identity through meditation
         await self.ronin.prepare_self(self.model.ronin_system_message)
         return self.ronin
@@ -364,6 +413,48 @@ class Dojo:
             model_obj=self.satori_obj,
             llm_client=self.llm_client
         )
+        
+        # Generate dynamic prompts based on dojo theme
+        if self.satori_obj:
+            # Get dynamic prompts from LLM
+            stream = await self.llm_client.chat.completions.create(
+                model="gpt-4-1106-preview",
+                messages=[{
+                    "role": "system",
+                    "content": (
+                        f"You are crafting prompts for an AI that will roleplay as a guide "
+                        f"in our dojo. The dojo's theme is:\n{self.model.theme}\n\n"
+                        f"The core principles are:\n" + 
+                        "\n".join(f"- {p}" for p in self.model.principles) +
+                        "\n\nCreate two prompts:\n"
+                        "1. A system prompt that guides the AI's responses\n"
+                        "2. A meditation prompt for initial identity discovery\n\n"
+                        "The prompts should fit the cultural context and theme. "
+                        "They must support variable interpolation for: {name}, {specialties}, and {teaching_style}.\n\n"
+                        "Respond in JSON format with keys:\n"
+                        "- system_prompt (string)\n"
+                        "- meditation_prompt (string)"
+                    )
+                }],
+                stream=True
+            )
+            
+            # Collect the response
+            full_response = []
+            async for chunk in stream:
+                if hasattr(chunk.choices[0].delta, 'content'):
+                    content_chunk = chunk.choices[0].delta.content
+                    if content_chunk:
+                        full_response.append(content_chunk)
+            
+            # Parse and store the prompts
+            raw_response = ''.join(full_response)
+            cleaned_json = self._clean_json_response(raw_response)
+            prompts = json.loads(cleaned_json)
+            
+            self.satori_obj.system_prompt = prompts['system_prompt']
+            self.satori_obj.meditation_prompt = prompts['meditation_prompt']
+            await sync_to_async(self.satori_obj.save)()
         
         # Let the Satori discover their identity through meditation
         await self.satori.prepare_self(self.model.satori_system_message)
@@ -455,19 +546,20 @@ class Dojo:
             mondo: The mondo instance for this dialogue
         """
         # Use the Ronin's LLM interaction methods to generate the opening question
-        system_prompt = (
-            f"You are a Ronin named {self.ronin.name} with interests in "
-            f"{', '.join(self.ronin.interests)} and a {self.ronin.style} "
-            f"approach. You have named your quest: '{mondo.quest.title}'\n\n"
-            "Generate a thoughtful opening question that begins your journey of understanding. "
-            "Consider the depth of what you seek to learn and how your interests shape your inquiry."
-        )
+        messages = [{
+            "role": "system",
+            "content": await self.ronin.get_system_prompt()
+        }, {
+            "role": "user",
+            "content": (
+                f"You have named your quest: '{mondo.quest.title}'\n\n"
+                "Generate a thoughtful opening question that begins your journey of understanding. "
+                "Consider the depth of what you seek to learn and how your interests shape your inquiry."
+            )
+        }]
         
         # Get the generated question using the Ronin's stream method
-        shomon_content = await self.ronin.stream_llm_response([{
-            "role": "system",
-            "content": system_prompt
-        }])
+        shomon_content = await self.ronin.stream_llm_response(messages)
         
         logger.info(f"Ronin {self.ronin.name} opens the Mondo with completed shomon:\n{shomon_content}")
         
