@@ -22,6 +22,9 @@ environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 # OpenAI
 OPENAI_API_KEY = env('OPENAI_API_KEY')
 
+# Entity detection settings
+ENTITY_CONFIDENCE_THRESHOLD = 0.8  # Cosine similarity threshold for entity detection
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 # BASE_DIR already defined above with environ initialization
 
@@ -211,6 +214,3 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-# Entity Detection Settings
-ENTITY_CONFIDENCE_THRESHOLD = 0.8  # Minimum confidence score for entity detection
