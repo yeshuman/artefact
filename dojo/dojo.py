@@ -6,9 +6,11 @@ from asgiref.sync import sync_to_async
 import json
 import logging
 import asyncio
+import numpy as np
 from dojo.models import Dojo as DojoModel
 from quests.models import Quest
 from mondos.models import Mondo, RoninMessage, SatoriMessage
+from entities.models import EntityArchetype, EntityReference
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -266,15 +268,16 @@ class Dojo:
             response = '\n'.join(lines)
         return response.strip()
         
+    async def _get_embedding(self, text: str) -> np.ndarray:
+        """Get embedding vector for text using OpenAI's embedding model."""
+        response = await self.llm_client.embeddings.create(
+            model="text-embedding-ada-002",
+            input=text
+        )
+        return np.array(response.data[0].embedding)
+
     async def initialize(self) -> None:
-        """Initialize the Dojo's cultural and philosophical context.
-        
-        This method establishes the foundational elements that will shape
-        all interactions within the Dojo, including:
-        - Theme and principles from any culture or time period
-        - System messages for personality shaping
-        - Cultural context
-        """
+        """Initialize the Dojo's cultural and philosophical context."""
         # First, let the LLM contemplate the Dojo's essence
         stream = await self.llm_client.chat.completions.create(
             model="gpt-4-1106-preview",
@@ -331,6 +334,73 @@ class Dojo:
             satori_system_message=contemplation['satori_system_message']
         )
         logger.info(f"Created Dojo {self.model.id} with theme: {self.model.theme}")
+
+        # Generate Entity Archetypes
+        archetype_stream = await self.llm_client.chat.completions.create(
+            model="gpt-4-1106-preview",
+            messages=[{
+                "role": "system",
+                "content": (
+                    f"Given this dojo's theme:\n{self.model.theme}\n\n"
+                    f"And principles:\n" + "\n".join(f"- {p}" for p in self.model.principles) + "\n\n"
+                    "Define the key entity types that will be important in dialogues within this context.\n"
+                    "For each archetype, provide:\n"
+                    "- name: A clear identifier\n"
+                    "- description: What this type of entity represents\n"
+                    "- examples: A few examples of entities of this type\n\n"
+                    "Consider both concrete and abstract entities that might appear in discussions.\n\n"
+                    "Respond in JSON format with a list of archetypes:\n"
+                    "[\n"
+                    "  {\n"
+                    "    \"name\": \"concept\",\n"
+                    "    \"description\": \"Abstract ideas or principles\",\n"
+                    "    \"examples\": [\"wisdom\", \"patience\", \"harmony\"]\n"
+                    "  },\n"
+                    "  ...\n"
+                    "]"
+                )
+            }],
+            stream=True
+        )
+        
+        # Collect and parse archetype response
+        archetype_response = []
+        async for chunk in archetype_stream:
+            if hasattr(chunk.choices[0].delta, 'content'):
+                content_chunk = chunk.choices[0].delta.content
+                if content_chunk:
+                    logger.info(f"Archetype contemplation chunk: {content_chunk}")
+                    archetype_response.append(content_chunk)
+        
+        raw_archetypes = ''.join(archetype_response)
+        cleaned_archetypes = self._clean_json_response(raw_archetypes)
+        archetypes = json.loads(cleaned_archetypes)
+        
+        # Create archetype models with embeddings
+        for archetype in archetypes:
+            # Get embedding for archetype description
+            embedding = await self._get_embedding(archetype['description'])
+            
+            # Create the archetype
+            entity_archetype = await EntityArchetype.objects.acreate(
+                name=archetype['name'],
+                description=archetype['description'],
+                embedding=embedding
+            )
+            logger.info(f"Created archetype: {entity_archetype.name}")
+            
+            # Create reference entities for examples
+            for example in archetype['examples']:
+                # Get embedding for this example
+                example_embedding = await self._get_embedding(example)
+                
+                ref = await EntityReference.objects.acreate(
+                    text=example,
+                    archetype=entity_archetype,
+                    embedding=example_embedding,
+                    mondo=None  # Global reference
+                )
+                logger.info(f"Created reference entity: {ref.text} ({entity_archetype.name})")
         
     async def prepare_ronin(
         self,

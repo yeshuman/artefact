@@ -72,11 +72,11 @@ async def test_message(db, test_mondo):
     )
 
 @pytest.fixture
-async def paris_reference(db, test_mondo):
+async def paris_reference(db, test_mondo, location_archetype):
     """Create a reference entity for Paris."""
     return await EntityReference.objects.acreate(
         text="Paris",
-        type="Location.Geographic",
+        archetype=location_archetype,
         embedding=np.random.rand(1536).tolist(),  # Mock embedding
         mondo=test_mondo
     )
@@ -155,7 +155,7 @@ async def test_entity_confidence_threshold(db, location_archetype, test_message)
     assert not low_conf.is_confident
 
 @pytest.mark.asyncio
-async def test_vector_similarity_search(db, test_mondo):
+async def test_vector_similarity_search(db, test_mondo, location_archetype):
     """Test vector similarity search for entity matching."""
     # Create reference entities with known embeddings
     base_embedding = np.random.rand(1536)
@@ -164,21 +164,21 @@ async def test_vector_similarity_search(db, test_mondo):
     
     ref1 = await EntityReference.objects.acreate(
         text="Tokyo",
-        type="Location.Geographic",
+        archetype=location_archetype,
         embedding=base_embedding.tolist(),
         mondo=test_mondo
     )
     
     ref2 = await EntityReference.objects.acreate(
         text="Tokyo, Japan",
-        type="Location.Geographic",
+        archetype=location_archetype,
         embedding=similar_embedding.tolist(),
         mondo=test_mondo
     )
     
     ref3 = await EntityReference.objects.acreate(
         text="London",
-        type="Location.Geographic",
+        archetype=location_archetype,
         embedding=different_embedding.tolist(),
         mondo=test_mondo
     )

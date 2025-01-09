@@ -2,6 +2,10 @@ import json
 import pytest
 import logging
 from unittest.mock import AsyncMock, patch
+from dojo.dojo import Dojo
+from entities.models import Entity, EntityArchetype, EntityReference
+from ronins.ronin import Ronin
+from satoris.satori import Satori
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +24,7 @@ class MockStreamResponse:
     
     def __aiter__(self):
         return self
+    
     
     async def __anext__(self):
         if self.current_pos >= len(self.content):
@@ -49,6 +54,9 @@ class MockAsyncCompletions:
         if "Create a unique philosophical framework for a Dojo" in system_content:
             response_content = json.dumps(state['responses']['dojo_contemplation'])
             logger.debug(f"Returning dojo contemplation response: {response_content}")
+        elif "Define the key entity types that will be important in dialogues" in system_content:
+            response_content = json.dumps(state['responses']['archetype_contemplation'])
+            logger.debug(f"Returning archetype contemplation response: {response_content}")
         elif "Through deep meditation, discover your identity as a seeker" in (user_content or ''):
             # Ronin meditation response
             response_content = json.dumps({
@@ -129,8 +137,19 @@ class MockAsyncCompletions:
 class MockChat:
     completions = MockAsyncCompletions()
 
+class MockEmbeddings:
+    @classmethod
+    async def create(cls, **kwargs):
+        # Return mock embedding of size 1536
+        return type('Response', (), {
+            'data': [type('Embedding', (), {
+                'embedding': [0.0] * 1536
+            })]
+        })
+
 class MockOpenAI:
     chat = MockChat()
+    embeddings = MockEmbeddings()
 
 @pytest.mark.asyncio
 @pytest.mark.mock
@@ -142,6 +161,23 @@ async def test_mondo_qa_interaction_mock(mock_llm_responses):
     state['exchange_count'] = 0
     state['last_speaker'] = None
     state['responses'] = mock_llm_responses
+    
+    # Clean up existing entities, references and archetypes
+    from entities.models import Entity
+    await Entity.objects.all().adelete()
+    await EntityReference.objects.all().adelete()
+    await EntityArchetype.objects.all().adelete()
+    
+    # Add archetype response to mock responses
+    mock_llm_responses['archetype_contemplation'] = [{
+        "name": "concept",
+        "description": "Abstract ideas or principles",
+        "examples": ["wisdom", "harmony", "balance"]
+    }, {
+        "name": "technique",
+        "description": "Specific methods or practices",
+        "examples": ["meditation", "coding", "testing"]
+    }]
     
     with patch('openai.AsyncOpenAI', return_value=MockOpenAI()):
         from dojo.dojo import Dojo
@@ -186,6 +222,23 @@ async def test_mondo_continue_conversation_unlimited_mock(mock_llm_responses):
     state['exchange_count'] = 0
     state['last_speaker'] = None
     state['responses'] = mock_llm_responses
+    
+    # Clean up existing entities, references and archetypes
+    from entities.models import Entity
+    await Entity.objects.all().adelete()
+    await EntityReference.objects.all().adelete()
+    await EntityArchetype.objects.all().adelete()
+    
+    # Add archetype response to mock responses
+    mock_llm_responses['archetype_contemplation'] = [{
+        "name": "concept",
+        "description": "Abstract ideas or principles",
+        "examples": ["wisdom", "harmony", "balance"]
+    }, {
+        "name": "technique",
+        "description": "Specific methods or practices",
+        "examples": ["meditation", "coding", "testing"]
+    }]
     
     with patch('openai.AsyncOpenAI', return_value=MockOpenAI()):
         from dojo.dojo import Dojo
@@ -233,3 +286,67 @@ async def test_mondo_continue_conversation_unlimited_mock(mock_llm_responses):
         assert messages[0].content == mock_llm_responses['shomon']  # Initial question
         assert messages[1].content == mock_llm_responses['satori_answer']  # First answer
         assert messages[2].content == mock_llm_responses['ronin_question']  # Follow-up
+
+@pytest.mark.asyncio
+@pytest.mark.mock
+@pytest.mark.django_db(transaction=True)
+async def test_dojo_entity_archetypes_mock(mock_llm_responses):
+    """Test that a Dojo is initialized with entity archetypes."""
+    # Reset state
+    state['message_count'] = 0
+    state['exchange_count'] = 0
+    state['last_speaker'] = None
+    state['responses'] = mock_llm_responses
+    
+    # Clean up existing entities, references and archetypes
+    from entities.models import Entity
+    await Entity.objects.all().adelete()
+    await EntityReference.objects.all().adelete()
+    await EntityArchetype.objects.all().adelete()
+    
+    # Add archetype response to mock responses
+    mock_llm_responses['archetype_contemplation'] = [{
+        "name": "concept",
+        "description": "Abstract ideas or principles",
+        "examples": ["wisdom", "harmony", "balance"]
+    }, {
+        "name": "technique",
+        "description": "Specific methods or practices",
+        "examples": ["meditation", "coding", "testing"]
+    }]
+    
+    with patch('openai.AsyncOpenAI', return_value=MockOpenAI()):
+        # Create and initialize dojo
+        dojo = Dojo(llm_client=MockOpenAI())
+        await dojo.initialize()
+        
+        # Verify dojo model was created with theme and principles
+        assert dojo.model is not None
+        assert dojo.model.theme != ""
+        assert len(dojo.model.principles) > 0
+        
+        # Verify entity archetypes were created
+        archetypes = await EntityArchetype.objects.all().acount()
+        assert archetypes == 2, "Expected 2 entity archetypes"
+        
+        # Verify first archetype
+        concept_archetype = await EntityArchetype.objects.filter(
+            name="concept"
+        ).afirst()
+        assert concept_archetype is not None
+        assert concept_archetype.description == "Abstract ideas or principles"
+        assert len(concept_archetype.embedding) == 1536
+        
+        # Verify reference entities were created
+        concept_refs = await EntityReference.objects.filter(
+            archetype__name="concept"
+        ).acount()
+        assert concept_refs == 3, "Expected 3 concept reference entities"
+        
+        # Verify a specific reference
+        wisdom_ref = await EntityReference.objects.filter(
+            text="wisdom",
+            archetype__name="concept"
+        ).afirst()
+        assert wisdom_ref is not None
+        assert len(wisdom_ref.embedding) == 1536

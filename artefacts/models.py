@@ -606,19 +606,13 @@ class ArtefactWikidataRelation(ArtefactAttribute):
         blank=True,
         help_text="Additional context about the relationship"
     )
-
+    
     class Meta:
         indexes = [
             models.Index(fields=['property_id']),
             models.Index(fields=['confidence'])
         ]
-        constraints = [
-            models.UniqueConstraint(
-                fields=['artefact', 'related_artefact', 'property_id', 'is_inverse'],
-                name='unique_wikidata_relation'
-            )
-        ]
-
+    
     def __str__(self):
         direction = "<-" if self.is_inverse else "->"
-        return f"{self.artefact.name} -{self.property_label}{direction} {self.related_artefact.name}"
+        return f"{self.artefact.name} {direction} {self.property_label} {direction} {self.related_artefact.name}"

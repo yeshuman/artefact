@@ -101,6 +101,19 @@ def mock_llm_responses():
                 "self-discovery and deeper reflection."
             )
         },
+        'archetype_contemplation': [{
+            'name': 'concept',
+            'description': 'Abstract ideas, principles, or philosophical concepts',
+            'examples': ['wisdom', 'enlightenment', 'mindfulness']
+        }, {
+            'name': 'practice',
+            'description': 'Specific methods, techniques, or exercises',
+            'examples': ['meditation', 'tea ceremony', 'calligraphy']
+        }, {
+            'name': 'symbol',
+            'description': 'Metaphorical or representative elements',
+            'examples': ['mountain', 'path', 'bridge']
+        }],
         'ronin_meditation': {
             'name': 'Matsuo Basho',
             'interests': ['haiku poetry', 'mountain temples', 'seasonal changes'],

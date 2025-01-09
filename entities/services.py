@@ -1,9 +1,12 @@
 import re
-from typing import List, Dict, Tuple, Callable
+from typing import List, Dict, Tuple, Callable, Awaitable, Union
 import numpy as np
 from django.conf import settings
 from asgiref.sync import sync_to_async
 from entities.models import Entity, EntityReference, EntityArchetype
+import asyncio
+
+EmbeddingFunction = Union[Callable[[str], np.ndarray], Callable[[str], Awaitable[np.ndarray]]]
 
 class StreamingEntityDetector:
     def __init__(self, mondo_id: int, buffer_size: int = 5):
@@ -34,9 +37,9 @@ class StreamingEntityDetector:
         
         matches = []
         for ref in refs:
-            # Look for word boundary matches
+            # Look for word boundary matches (case-insensitive)
             pattern = r'\b' + re.escape(ref) + r'\b'
-            for match in re.finditer(pattern, text):
+            for match in re.finditer(pattern, text, re.IGNORECASE):
                 matches.append({
                     'text': match.group(),
                     'start': match.start(),
@@ -47,45 +50,53 @@ class StreamingEntityDetector:
         matches.sort(key=lambda x: x['start'])
         return matches
         
-    async def _get_similar_references(self, text: str, embedding_fn: Callable) -> List[Dict]:
+    async def _get_similar_references(self, text: str, embedding_fn: EmbeddingFunction) -> List[Dict]:
         """Find similar entity references using vector similarity."""
-        text_embedding = embedding_fn(text)
+        # Handle both sync and async embedding functions
+        if asyncio.iscoroutinefunction(embedding_fn):
+            text_embedding = await embedding_fn(text)
+        else:
+            text_embedding = embedding_fn(text)
         
         # Get references with embeddings
         refs = await sync_to_async(list)(
-            EntityReference.objects.filter(mondo_id=self.mondo_id).values_list('id', 'text', 'embedding')
+            EntityReference.objects.filter(mondo_id=self.mondo_id).select_related('archetype').values('id', 'text', 'embedding', 'archetype__name')
         )
         
         similar_refs = []
-        for ref_id, ref_text, ref_embedding in refs:
+        for ref in refs:
             # If text matches exactly, return with high confidence
-            if text.lower() == ref_text.lower():
+            if text.lower() == ref['text'].lower():
                 similar_refs.append({
-                    'id': ref_id,
-                    'text': ref_text,
-                    'confidence': 1.0
+                    'id': ref['id'],
+                    'text': ref['text'],
+                    'confidence': 1.0,
+                    'archetype_name': ref['archetype__name'],
+                    'embedding': ref['embedding']
                 })
                 continue
                 
             # Skip if either embedding is all zeros
-            if not np.any(text_embedding) or not np.any(ref_embedding):
+            if not np.any(text_embedding) or not np.any(ref['embedding']):
                 continue
                 
             # Calculate cosine similarity
-            similarity = np.dot(text_embedding, ref_embedding) / (
-                np.linalg.norm(text_embedding) * np.linalg.norm(ref_embedding)
+            similarity = np.dot(text_embedding, ref['embedding']) / (
+                np.linalg.norm(text_embedding) * np.linalg.norm(ref['embedding'])
             )
             
             if similarity > settings.ENTITY_CONFIDENCE_THRESHOLD:
                 similar_refs.append({
-                    'id': ref_id,
-                    'text': ref_text,
-                    'confidence': float(similarity)
+                    'id': ref['id'],
+                    'text': ref['text'],
+                    'confidence': float(similarity),
+                    'archetype_name': ref['archetype__name'],
+                    'embedding': ref['embedding']
                 })
                 
         return similar_refs
         
-    async def process_chunk(self, text: str, message_id: int, embedding_fn: Callable) -> Tuple[str, List[Dict]]:
+    async def process_chunk(self, text: str, message_id: int, embedding_fn: EmbeddingFunction) -> Tuple[str, List[Dict]]:
         """Process a chunk of text and detect entities."""
         # Handle incomplete words from previous chunk
         if self.last_incomplete_word:
@@ -142,10 +153,16 @@ class StreamingEntityDetector:
                 ref = similar_refs[0]
                 
                 # Get the reference entity
-                reference = await sync_to_async(EntityReference.objects.get)(id=ref['id'])
+                reference = await sync_to_async(EntityReference.objects.select_related('archetype').get)(id=ref['id'])
+                
+                # Get embedding for the entity
+                if asyncio.iscoroutinefunction(embedding_fn):
+                    entity_embedding = await embedding_fn(match['text'])
+                else:
+                    entity_embedding = embedding_fn(match['text'])
                 
                 # Create entity
-                entity = await Entity.objects.acreate(
+                entity = await sync_to_async(Entity.objects.create)(
                     text=match['text'],
                     archetype=self.archetype,  # Use the provided archetype
                     reference_entity=reference,
@@ -153,7 +170,7 @@ class StreamingEntityDetector:
                     start_position=match['start'],
                     end_position=match['end'],
                     confidence=ref['confidence'],
-                    embedding=embedding_fn(match['text'])
+                    embedding=entity_embedding
                 )
                 
                 # Add markup
@@ -172,7 +189,7 @@ class StreamingEntityDetector:
                 entities.append({
                     'id': entity.id,
                     'text': match['text'],
-                    'type': reference.type,
+                    'type': ref['archetype_name'],  # Use the prefetched archetype name
                     'confidence': ref['confidence'],
                     'start': match['start'],
                     'end': match['end']

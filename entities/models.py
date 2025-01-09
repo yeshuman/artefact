@@ -1,6 +1,8 @@
 from django.db import models
 from django.conf import settings
 from pgvector.django import VectorField, IvfflatIndex, HnswIndex
+from django.db import connection
+from asgiref.sync import sync_to_async
 
 
 class EntityArchetype(models.Model):
@@ -57,6 +59,42 @@ class EntityArchetype(models.Model):
         if self.parent:
             return f"{self.parent.full_path}.{self.name}"
         return self.name
+    
+    @classmethod
+    async def is_duplicate(cls, name: str, embedding) -> bool:
+        """
+        Check if an archetype with the same name or very similar embedding exists.
+        
+        Args:
+            name: The name to check for duplicates
+            embedding: The embedding to check for similarity
+            
+        Returns:
+            bool: True if a duplicate exists, False otherwise
+        """
+        # Check for exact name match
+        name_exists = await cls.objects.filter(name=name).aexists()
+        if name_exists:
+            return True
+            
+        # Check for similar embeddings using raw SQL
+        # Convert embedding to string for SQL
+        embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+        query = f"""
+            SELECT EXISTS (
+                SELECT 1 FROM entities_entityarchetype
+                WHERE embedding <-> %s::vector < 0.05
+            )
+        """
+        
+        @sync_to_async
+        def check_similar():
+            with connection.cursor() as cursor:
+                cursor.execute(query, [embedding_str])
+                result = cursor.fetchone()
+                return result[0]
+        
+        return await check_similar()
 
 class EntityReference(models.Model):
     """
@@ -64,15 +102,22 @@ class EntityReference(models.Model):
     in conversations. It serves as a reference point for entity matching and linking.
     """
     text = models.TextField()
-    type = models.CharField(max_length=50)
+    archetype = models.ForeignKey(
+        EntityArchetype,
+        on_delete=models.PROTECT,
+        related_name='reference_entities',
+        help_text="The archetype this reference entity belongs to"
+    )
     embedding = VectorField(dimensions=1536)  # For OpenAI embeddings
-    mondo = models.ForeignKey('mondos.Mondo', on_delete=models.CASCADE, related_name='entity_references')
+    mondo = models.ForeignKey('mondos.Mondo', on_delete=models.CASCADE, related_name='entity_references', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ['text', 'type', 'mondo']
+        unique_together = ['text', 'archetype', 'mondo']
         indexes = [
+            models.Index(fields=['text']),
+            models.Index(fields=['archetype']),
             HnswIndex(
                 name='reference_embedding_idx',
                 fields=['embedding'],
@@ -83,7 +128,7 @@ class EntityReference(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.type}: {self.text}"
+        return f"{self.archetype.name}: {self.text}"
 
 class Entity(models.Model):
     """

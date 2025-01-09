@@ -52,40 +52,47 @@ async def test_mondo(test_dojo, test_quest):
     )
 
 @pytest.fixture
-async def test_message(db, test_mondo, test_ronin):
+async def test_message(test_mondo, test_ronin):
     from mondos.models import RoninMessage
-    message = await RoninMessage.objects.acreate(
+    return await RoninMessage.objects.acreate(
         mondo=test_mondo,
         content="Test message about Paris and London",
         author=test_ronin
     )
-    return message
 
 @pytest.fixture
 async def location_archetype():
-    archetype = await EntityArchetype.objects.acreate(
+    # Create a zero vector of the correct size
+    zero_vector = np.zeros(1536, dtype=np.float32)
+    
+    # Try to get existing archetype first
+    archetype = await EntityArchetype.objects.filter(name="location").afirst()
+    if archetype:
+        return archetype
+        
+    # Create new if doesn't exist
+    return await EntityArchetype.objects.acreate(
         name="location",
         description="A place or location",
-        embedding=np.zeros(1536)  # Default zero vector for testing
+        embedding=zero_vector.tolist()  # Convert to list for JSON serialization
     )
-    return archetype
 
 @pytest.fixture
 async def paris_reference(location_archetype, test_mondo):
     return await EntityReference.objects.acreate(
         text="Paris",
-        type="location",
+        archetype=location_archetype,
         mondo=test_mondo,
-        embedding=np.zeros(1536)  # Default zero vector for testing
+        embedding=np.zeros(1536, dtype=np.float32)  # Use numpy array for embedding
     )
 
 @pytest.fixture
 async def london_reference(location_archetype, test_mondo):
     return await EntityReference.objects.acreate(
         text="London",
-        type="location", 
+        archetype=location_archetype,
         mondo=test_mondo,
-        embedding=np.zeros(1536)  # Default zero vector for testing
+        embedding=np.zeros(1536, dtype=np.float32)  # Use numpy array for embedding
     )
 
 @pytest.fixture
@@ -98,24 +105,24 @@ def mock_embedding_fn():
 def detector(test_mondo):
     return StreamingEntityDetector(mondo_id=test_mondo.id)
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 async def test_streaming_entity_detector_word_boundary(
-    detector, paris_reference, location_archetype, mock_embedding_fn
+    detector, paris_reference, location_archetype, mock_embedding_fn, test_message
 ):
     """Test that entities are detected at word boundaries."""
     detector.archetype = location_archetype  # Set the archetype
     text = "I love Paris in the springtime."
-    marked_text, entities = await detector.process_chunk(text, 1, mock_embedding_fn)
+    marked_text, entities = await detector.process_chunk(text, test_message.id, mock_embedding_fn)
     
     assert len(entities) == 1
     assert entities[0]["text"] == "Paris"
-    assert entities[0]["type"] == "location"
+    assert entities[0]["type"] == location_archetype.name
     assert entities[0]["confidence"] == 1.0
     assert marked_text == f'I love <entity id="{entities[0]["id"]}">Paris</entity> in the springtime.'
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 async def test_streaming_entity_detector_context_window(
-    detector, paris_reference, location_archetype, mock_embedding_fn
+    detector, paris_reference, location_archetype, mock_embedding_fn, test_message
 ):
     """Test that context window is maintained correctly."""
     detector.archetype = location_archetype  # Set the archetype
@@ -123,34 +130,34 @@ async def test_streaming_entity_detector_context_window(
     text2 = "Paris in"
     text3 = "the springtime."
     
-    marked1, entities1 = await detector.process_chunk(text1, 1, mock_embedding_fn)
+    marked1, entities1 = await detector.process_chunk(text1, test_message.id, mock_embedding_fn)
     assert len(entities1) == 0
     assert marked1 == text1
     
-    marked2, entities2 = await detector.process_chunk(text2, 1, mock_embedding_fn)
+    marked2, entities2 = await detector.process_chunk(text2, test_message.id, mock_embedding_fn)
     assert len(entities2) == 1
     assert entities2[0]["text"] == "Paris"
     assert marked2 == f'<entity id="{entities2[0]["id"]}">Paris</entity> in'
     
-    marked3, entities3 = await detector.process_chunk(text3, 1, mock_embedding_fn)
+    marked3, entities3 = await detector.process_chunk(text3, test_message.id, mock_embedding_fn)
     assert len(entities3) == 0
     assert marked3 == text3
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 async def test_streaming_entity_detector_markup(
-    detector, paris_reference, london_reference, location_archetype, mock_embedding_fn
+    detector, paris_reference, london_reference, location_archetype, mock_embedding_fn, test_message
 ):
     """Test that entity markup is added correctly for multiple entities."""
     detector.archetype = location_archetype  # Set the archetype
     text = "I went from Paris to London yesterday."
-    marked_text, entities = await detector.process_chunk(text, 1, mock_embedding_fn)
+    marked_text, entities = await detector.process_chunk(text, test_message.id, mock_embedding_fn)
     
     assert len(entities) == 2
     paris_entity = next(e for e in entities if e["text"] == "Paris")
     london_entity = next(e for e in entities if e["text"] == "London")
     
-    assert paris_entity["type"] == "location"
-    assert london_entity["type"] == "location"
+    assert paris_entity["type"] == location_archetype.name
+    assert london_entity["type"] == location_archetype.name
     assert paris_entity["confidence"] == 1.0
     assert london_entity["confidence"] == 1.0
     
@@ -159,3 +166,51 @@ async def test_streaming_entity_detector_markup(
         f'<entity id="{london_entity["id"]}">London</entity> yesterday.'
     )
     assert marked_text == expected_text 
+
+@pytest.mark.asyncio
+@pytest.mark.mock
+@pytest.mark.django_db(transaction=True)
+async def test_entity_archetype_creation():
+    """Test that entity archetypes are created without duplicates."""
+    from entities.models import EntityArchetype
+    
+    # Ensure we start with a clean slate
+    await EntityArchetype.objects.all().adelete()
+    
+    # Verify we start with a clean slate
+    initial_count = await EntityArchetype.objects.acount()
+    assert initial_count == 0, "Expected empty database"
+    
+    # Create initial archetype
+    embedding = np.zeros(1536, dtype=np.float32)
+    concept_archetype = await EntityArchetype.objects.acreate(
+        name="concept",
+        description="Abstract ideas or principles",
+        embedding=embedding
+    )
+    
+    # Verify first archetype
+    assert concept_archetype is not None
+    assert concept_archetype.description == "Abstract ideas or principles"
+    assert len(concept_archetype.embedding) == 1536
+    
+    # Check for duplicate name
+    is_duplicate = await EntityArchetype.is_duplicate("concept", embedding)
+    assert is_duplicate, "Should detect duplicate name"
+    
+    # Check for similar embedding with different name
+    similar_embedding = np.zeros(1536, dtype=np.float32)  # Same embedding
+    is_duplicate = await EntityArchetype.is_duplicate("different_name", similar_embedding)
+    assert is_duplicate, "Should detect similar embedding"
+    
+    # Create different archetype with different embedding
+    different_embedding = np.ones(1536, dtype=np.float32)  # Different embedding
+    technique_archetype = await EntityArchetype.objects.acreate(
+        name="technique",
+        description="Specific methods or practices",
+        embedding=different_embedding
+    )
+    
+    # Verify both archetypes exist
+    archetypes = await EntityArchetype.objects.acount()
+    assert archetypes == 2, "Expected 2 unique archetypes" 

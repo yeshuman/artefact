@@ -1,8 +1,11 @@
-from typing import Optional, Any, TYPE_CHECKING, Dict
+from typing import Optional, Any, TYPE_CHECKING, Dict, List
 from asgiref.sync import sync_to_async
 from dojo.dojo import Sensei
 from .models import Satori  # DB Model class
 from mondos.models import SatoriMessage  # For type checking in respond method
+from entities.services import StreamingEntityDetector
+from entities.models import EntityArchetype
+import numpy as np
 import logging
 
 logger = logging.getLogger(__name__)
@@ -153,7 +156,7 @@ class Satori(Sensei):
             stream=True
         )
         
-        # Collect streamed response
+        # Collect the full response first
         full_response = []
         async for chunk in stream:
             if hasattr(chunk.choices[0].delta, 'content'):
@@ -163,4 +166,39 @@ class Satori(Sensei):
                     full_response.append(content_chunk)
         
         response_content = ''.join(full_response)
-        return await self.message(mondo, response_content)
+        
+        # Create the message first
+        response = await self.message(mondo, response_content)
+        
+        # Initialize entity detector
+        detector = StreamingEntityDetector(mondo_id=mondo.id)
+        
+        # Get all archetypes for entity detection
+        archetypes = await sync_to_async(list)(EntityArchetype.objects.all())
+        
+        # Create embedding function using OpenAI
+        async def get_embedding(text: str) -> np.ndarray:
+            response = await self.llm_client.embeddings.create(
+                model="text-embedding-ada-002",
+                input=text
+            )
+            return np.array(response.data[0].embedding, dtype=np.float32)
+        
+        # Process the full response with each archetype
+        marked_content = response_content
+        for archetype in archetypes:
+            detector.archetype = archetype
+            marked_text, entities = await detector.process_chunk(
+                response_content,
+                response.id,  # Use the created message's ID
+                get_embedding
+            )
+            if entities:
+                marked_content = marked_text
+                logger.info(f"Detected entities: {entities}")
+        
+        # Update the message with marked-up content
+        response.content = marked_content
+        await sync_to_async(response.save)()
+        
+        return response
