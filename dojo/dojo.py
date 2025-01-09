@@ -193,16 +193,18 @@ class Sensei:
             raise ValueError(f"{self.__class__.__name__} requires an LLM client to formulate responses")
         
         # Get message content and mondo safely
-        content = await sync_to_async(lambda: message.content)()
+        content = await message.acontent
         mondo = await sync_to_async(lambda: message.mondo)()
         
         # Get conversation history
-        messages = [msg async for msg in mondo.messages.all()]
+        messages = await mondo.messages.all()
         history = []
         for msg in messages:
-            msg_content = await sync_to_async(lambda: msg.content)()
-            msg_author = await sync_to_async(lambda: msg.author.name)()
-            role = "assistant" if isinstance(msg, SatoriMessage) else "user"
+            msg_content = await msg.acontent
+            msg_author = await msg.aauthor
+            msg_author_name = await sync_to_async(lambda: msg_author.name)()
+            is_satori_message = await sync_to_async(lambda: isinstance(msg, SatoriMessage))()
+            role = "assistant" if is_satori_message else "user"
             history.append({"role": role, "content": msg_content})
         
         # Get system prompt and generate response
@@ -544,8 +546,8 @@ class Dojo:
         
         # Create the quest
         quest = await Quest.objects.acreate(
-            ronin=self.ronin.model_obj,
-            satori=self.satori.model_obj,
+            ronin=await sync_to_async(lambda: self.ronin.model_obj)(),
+            satori=await sync_to_async(lambda: self.satori.model_obj)(),
             title=quest_title
         )
         logger.info(f"Created quest: {quest.id} - {quest.title}")
@@ -573,8 +575,14 @@ class Dojo:
         exchanges = 0
         try:
             while True:
-                # Get latest message
-                latest_message = await sync_to_async(lambda: mondo.messages.latest())()
+                # Get all messages and convert to list first
+                messages = await sync_to_async(list)(mondo.messages.all())
+                if not messages:
+                    break
+                    
+                # Sort messages by creation time
+                messages.sort(key=lambda x: x.created_at, reverse=True)
+                latest_message = messages[0]
                 content = await sync_to_async(lambda: latest_message.content)()
                 
                 # Let the Ronin contemplate their understanding
@@ -585,7 +593,8 @@ class Dojo:
                     break
                 
                 # Determine next speaker based on last message
-                if isinstance(latest_message, RoninMessage):
+                is_ronin_message = await sync_to_async(lambda: isinstance(latest_message, RoninMessage))()
+                if is_ronin_message:
                     logger.info("Satori's turn to respond...")
                     await self.satori.respond(latest_message)
                 else:
@@ -622,7 +631,7 @@ class Dojo:
         }, {
             "role": "user",
             "content": (
-                f"You have named your quest: '{mondo.quest.title}'\n\n"
+                f"You have named your quest: '{await sync_to_async(lambda: mondo.quest.title)()}'\n\n"
                 "Generate a thoughtful opening question that begins your journey of understanding. "
                 "Consider the depth of what you seek to learn and how your interests shape your inquiry."
             )

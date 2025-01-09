@@ -34,3 +34,13 @@ class Dojo(models.Model):
 
     def __str__(self):
         return f"Dojo {self.id} - {self.theme}"
+
+    @property
+    async def atheme(self):
+        """Async access to theme field."""
+        return self.theme
+
+    @property
+    async def aprinciples(self):
+        """Async access to principles field."""
+        return self.principles

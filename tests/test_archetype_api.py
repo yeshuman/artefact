@@ -2,15 +2,70 @@ import pytest
 from openai import AsyncOpenAI
 from entities.models import EntityArchetype, EntityReference, Entity
 from entities.services import StreamingEntityDetector
+from mondos.models import Mondo, RoninMessage
+from dojo.models import Dojo
+from quests.models import Quest
+from ronins.models import Ronin
+from satoris.models import Satori
 
 @pytest.fixture
 async def openai_client():
     """Create a real OpenAI client for testing."""
     return AsyncOpenAI()
 
+@pytest.fixture
+async def test_dojo():
+    return await Dojo.objects.acreate(
+        theme="Testing",
+        principles=["Test principle 1", "Test principle 2"],
+        ronin_system_message="Test ronin message",
+        satori_system_message="Test satori message"
+    )
+
+@pytest.fixture
+async def test_ronin():
+    return await Ronin.objects.acreate(
+        name="Test Ronin",
+        interests=["Testing"],
+        style="Direct",
+        system_prompt="Test system prompt"
+    )
+
+@pytest.fixture
+async def test_satori():
+    return await Satori.objects.acreate(
+        name="Test Satori",
+        specialties="Testing",
+        teaching_style="Direct",
+        system_prompt="Test system prompt"
+    )
+
+@pytest.fixture
+async def test_quest(test_dojo, test_ronin, test_satori):
+    return await Quest.objects.acreate(
+        title="Test Quest",
+        ronin=test_ronin,
+        satori=test_satori
+    )
+
+@pytest.fixture
+async def test_mondo(test_dojo, test_quest):
+    return await Mondo.objects.acreate(
+        dojo=test_dojo,
+        quest=test_quest
+    )
+
+@pytest.fixture
+async def test_message(test_mondo, test_ronin):
+    return await RoninMessage.objects.acreate(
+        mondo=test_mondo,
+        content="Test message about Paris and London",
+        author=test_ronin
+    )
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.real
-async def test_create_location_archetype(openai_client):
+async def test_create_location_archetype(openai_client, test_message):
     """Test creating a location archetype with real embeddings."""
     # Create a location archetype
     description = "Geographic locations like cities, countries, and landmarks"
@@ -39,6 +94,7 @@ async def test_create_location_archetype(openai_client):
         await EntityReference.objects.acreate(
             text=location,
             archetype=archetype,
+            mondo=test_message.mondo,
             embedding=embedding.data[0].embedding
         )
     
@@ -48,7 +104,7 @@ async def test_create_location_archetype(openai_client):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.real
-async def test_entity_detection_with_real_embeddings(openai_client):
+async def test_entity_detection_with_real_embeddings(openai_client, test_message):
     """Test detecting entities using real embeddings and similarity matching."""
     # Create a location archetype first
     description = "Geographic locations like cities, countries, and landmarks"
@@ -71,11 +127,12 @@ async def test_entity_detection_with_real_embeddings(openai_client):
     await EntityReference.objects.acreate(
         text="Paris",
         archetype=archetype,
+        mondo=test_message.mondo,
         embedding=paris_embedding.data[0].embedding
     )
     
     # Create a detector
-    detector = StreamingEntityDetector(mondo_id=None)
+    detector = StreamingEntityDetector(mondo_id=test_message.mondo.id)
     detector.archetype = archetype
     
     # Test detection in text
@@ -85,7 +142,7 @@ async def test_entity_detection_with_real_embeddings(openai_client):
         """Sync wrapper for getting embeddings."""
         return paris_embedding.data[0].embedding  # Use same embedding for testing
     
-    marked_text, entities = await detector.process_chunk(text, None, get_embedding)
+    marked_text, entities = await detector.process_chunk(text, test_message.id, get_embedding)
     
     # Verify detection
     assert len(entities) == 1
@@ -96,7 +153,7 @@ async def test_entity_detection_with_real_embeddings(openai_client):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.real
-async def test_context_aware_entity_detection(openai_client):
+async def test_context_aware_entity_detection(openai_client, test_message):
     """Test entity detection with context awareness."""
     # Create a location archetype
     description = "Geographic locations like cities, countries, and landmarks"
@@ -120,11 +177,12 @@ async def test_context_aware_entity_detection(openai_client):
         await EntityReference.objects.acreate(
             text=place,
             archetype=archetype,
+            mondo=test_message.mondo,
             embedding=place_embedding.data[0].embedding
         )
     
     # Create a detector
-    detector = StreamingEntityDetector(mondo_id=None)
+    detector = StreamingEntityDetector(mondo_id=test_message.mondo.id)
     detector.archetype = archetype
     
     # Test detection with context
@@ -138,7 +196,7 @@ async def test_context_aware_entity_detection(openai_client):
         )
         return embedding.data[0].embedding
     
-    marked_text, entities = await detector.process_chunk(text, None, get_embedding)
+    marked_text, entities = await detector.process_chunk(text, test_message.id, get_embedding)
     
     # Verify both entities were detected
     assert len(entities) == 2

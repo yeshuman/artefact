@@ -5,196 +5,153 @@ from django.conf import settings
 from asgiref.sync import sync_to_async
 from entities.models import Entity, EntityReference, EntityArchetype
 import asyncio
+import sys
+import uuid
+from sklearn.metrics.pairwise import cosine_similarity
 
 EmbeddingFunction = Union[Callable[[str], np.ndarray], Callable[[str], Awaitable[np.ndarray]]]
 
 class StreamingEntityDetector:
-    def __init__(self, mondo_id: int, buffer_size: int = 5):
+    def __init__(self, mondo_id: int):
         self.mondo_id = mondo_id
-        self.buffer_size = buffer_size
-        self.context_buffer = []
-        self.last_incomplete_word = ""
-        self.archetype = None  # Will be set in tests
+        self.archetype = None
+        self.context = ""
+        self.incomplete_word = ""
+        self.context_size = 1000  # Keep last 1000 chars
+        self.similarity_threshold = 0.7  # Lower threshold for better recall
+        self.seen_words = set()  # Track processed words
         
-    def _get_context(self) -> str:
-        """Get the current context window as a string."""
-        return " ".join(self.context_buffer[-self.buffer_size:])
+    async def process_chunk(self, text: str, message_id: int, get_embedding_fn) -> Tuple[str, List[Dict]]:
+        """Process a chunk of text and detect entities."""
+        # Update context first
+        self.context += text
+        if len(self.context) > self.context_size:
+            self.context = self.context[-self.context_size:]
+            
+        # Calculate context offset
+        context_offset = len(self.context) - len(text)
         
-    def _update_context(self, text: str):
-        """Update the context buffer with new text."""
-        words = text.split()
-        if words:
-            self.context_buffer.extend(words)
-            if len(self.context_buffer) > self.buffer_size:
-                self.context_buffer = self.context_buffer[-self.buffer_size:]
-                
-    async def _find_pattern_matches(self, text: str) -> List[Dict]:
-        """Find potential entity matches in text using pattern matching."""
-        # Get all entity references for this mondo
-        refs = await sync_to_async(list)(
-            EntityReference.objects.filter(mondo_id=self.mondo_id).values_list('text', flat=True)
-        )
-        
+        # Process the text in two parts if we have an incomplete word
         matches = []
+        
+        if self.incomplete_word:
+            # First try to find entities that span the boundary
+            boundary_text = self.incomplete_word + text.split()[0] if text.split() else self.incomplete_word
+            boundary_matches = await self._find_entities(
+                boundary_text,
+                context_offset - len(self.incomplete_word),
+                message_id,
+                get_embedding_fn
+            )
+            matches.extend(boundary_matches)
+        
+        # Then process the rest of the text
+        text_matches = await self._find_entities(
+            text,
+            context_offset,
+            message_id,
+            get_embedding_fn
+        )
+        matches.extend(text_matches)
+        
+        # Add markup for detected entities
+        marked_text = text
+        # Sort matches by position in reverse to avoid markup interference
+        for match in sorted(matches, key=lambda x: x["start_position"], reverse=True):
+            start_in_chunk = match["start_position"] - context_offset
+            end_in_chunk = start_in_chunk + len(match["text"])
+            if 0 <= start_in_chunk < len(text):
+                marked_text = (
+                    marked_text[:start_in_chunk] +
+                    f'<entity id="{match["id"]}" type="{match["type"]}">{match["text"]}</entity>' +
+                    marked_text[end_in_chunk:]
+                )
+        
+        # Store detected entities
+        for match in matches:
+            await Entity.objects.acreate(
+                text=match["text"],
+                archetype=self.archetype,
+                message_id=message_id,
+                confidence=match["confidence"],
+                start_position=match["start_position"],
+                end_position=match["end_position"],
+                reference_entity=match["reference_entity"],
+                embedding=match["embedding"]  # Store the embedding used for the match
+            )
+        
+        # Update incomplete word - capture any partial word at the end
+        last_word_match = re.search(r'\w+$', text)
+        self.incomplete_word = last_word_match.group() if last_word_match else ""
+        
+        return marked_text, matches
+        
+    async def _find_entities(
+        self,
+        text: str,
+        offset: int,
+        message_id: int,
+        get_embedding_fn
+    ) -> List[Dict]:
+        """Find entities in a piece of text with the given offset."""
+        matches = []
+        # Get all reference entities for this archetype
+        refs = [ref async for ref in EntityReference.objects.filter(archetype=self.archetype)]
+        
+        # Create a pattern that matches any of the reference entity texts
+        # Allow for some variations in the text (e.g. "Louvre Museum" matches "Louvre")
+        ref_texts = []
         for ref in refs:
-            # Look for word boundary matches (case-insensitive)
-            pattern = r'\b' + re.escape(ref) + r'\b'
-            for match in re.finditer(pattern, text, re.IGNORECASE):
-                matches.append({
-                    'text': match.group(),
-                    'start': match.start(),
-                    'end': match.end()
-                })
+            parts = ref.text.split()
+            if len(parts) > 1:
+                # Add both full name and main part
+                ref_texts.append(re.escape(ref.text))
+                ref_texts.append(re.escape(parts[0]))
+            else:
+                ref_texts.append(re.escape(ref.text))
+        
+        pattern = r'\b(?:' + '|'.join(ref_texts) + r')\b'
+        words = re.finditer(pattern, text, re.IGNORECASE)
+        
+        for word_match in words:
+            word = word_match.group()
+            chunk_start = word_match.start()
+            
+            # Skip if we've already processed this word at this position
+            word_key = f"{word}_{offset + chunk_start}"
+            if word_key in self.seen_words:
+                continue
+            self.seen_words.add(word_key)
+            
+            # Get embedding for word
+            embedding_result = get_embedding_fn(word)
+            if asyncio.iscoroutine(embedding_result):
+                embedding = await embedding_result
+            else:
+                embedding = embedding_result
+            
+            # Find the matching reference entity
+            # Match either exact text or first word
+            ref = next(
+                r for r in refs 
+                if r.text.lower() == word.lower() or r.text.lower().startswith(word.lower())
+            )
+            
+            # Create the match with exact match confidence
+            match = {
+                "text": word,
+                "type": self.archetype.name,
+                "confidence": 1.0 if ref.text.lower() == word.lower() else 0.9,
+                "id": str(uuid.uuid4()),
+                "start_position": offset + chunk_start,
+                "end_position": offset + chunk_start + len(word),
+                "reference_entity": ref,
+                "embedding": embedding
+            }
+            matches.append(match)
                 
-        # Sort by position
-        matches.sort(key=lambda x: x['start'])
         return matches
         
-    async def _get_similar_references(self, text: str, embedding_fn: EmbeddingFunction) -> List[Dict]:
-        """Find similar entity references using vector similarity."""
-        # Handle both sync and async embedding functions
-        if asyncio.iscoroutinefunction(embedding_fn):
-            text_embedding = await embedding_fn(text)
-        else:
-            text_embedding = embedding_fn(text)
-        
-        # Get references with embeddings
-        refs = await sync_to_async(list)(
-            EntityReference.objects.filter(mondo_id=self.mondo_id).select_related('archetype').values('id', 'text', 'embedding', 'archetype__name')
-        )
-        
-        similar_refs = []
-        for ref in refs:
-            # If text matches exactly, return with high confidence
-            if text.lower() == ref['text'].lower():
-                similar_refs.append({
-                    'id': ref['id'],
-                    'text': ref['text'],
-                    'confidence': 1.0,
-                    'archetype_name': ref['archetype__name'],
-                    'embedding': ref['embedding']
-                })
-                continue
-                
-            # Skip if either embedding is all zeros
-            if not np.any(text_embedding) or not np.any(ref['embedding']):
-                continue
-                
-            # Calculate cosine similarity
-            similarity = np.dot(text_embedding, ref['embedding']) / (
-                np.linalg.norm(text_embedding) * np.linalg.norm(ref['embedding'])
-            )
-            
-            if similarity > settings.ENTITY_CONFIDENCE_THRESHOLD:
-                similar_refs.append({
-                    'id': ref['id'],
-                    'text': ref['text'],
-                    'confidence': float(similarity),
-                    'archetype_name': ref['archetype__name'],
-                    'embedding': ref['embedding']
-                })
-                
-        return similar_refs
-        
-    async def process_chunk(self, text: str, message_id: int, embedding_fn: EmbeddingFunction) -> Tuple[str, List[Dict]]:
-        """Process a chunk of text and detect entities."""
-        # Handle incomplete words from previous chunk
-        if self.last_incomplete_word:
-            text = self.last_incomplete_word + text
-            self.last_incomplete_word = ""
-            
-        # Check if chunk ends with incomplete word
-        if not text.endswith(" "):
-            words = text.split()
-            if words:
-                last_word = words[-1]
-                last_word_start = text.rindex(last_word)
-                if not text[last_word_start-1:last_word_start].isspace():
-                    # Only treat as incomplete if it's not a complete word
-                    self.last_incomplete_word = last_word
-                    text = text[:last_word_start]
-                
-        # Update context
-        self._update_context(text)
-        
-        # If we have only an incomplete word, return it as is
-        if not text and self.last_incomplete_word:
-            return self.last_incomplete_word, []
-        
-        # Find pattern matches
-        matches = await self._find_pattern_matches(text)
-        
-        # Track processed spans to avoid overlaps
-        processed_spans = set()
-        entities = []
-        marked_text = text
-        
-        # Sort matches by position to process them in order
-        matches.sort(key=lambda x: x['start'])
-        
-        # Keep track of offset due to added markup
-        offset = 0
-        
-        for match in matches:
-            # Skip if span overlaps with processed
-            span = (match['start'], match['end'])
-            if any(start <= span[0] < end or start < span[1] <= end 
-                  for start, end in processed_spans):
-                continue
-                
-            # Get similar references
-            similar_refs = await self._get_similar_references(
-                match['text'],
-                embedding_fn
-            )
-            
-            if similar_refs:
-                # Use most similar reference
-                ref = similar_refs[0]
-                
-                # Get the reference entity
-                reference = await sync_to_async(EntityReference.objects.select_related('archetype').get)(id=ref['id'])
-                
-                # Get embedding for the entity
-                if asyncio.iscoroutinefunction(embedding_fn):
-                    entity_embedding = await embedding_fn(match['text'])
-                else:
-                    entity_embedding = embedding_fn(match['text'])
-                
-                # Create entity
-                entity = await sync_to_async(Entity.objects.create)(
-                    text=match['text'],
-                    archetype=self.archetype,  # Use the provided archetype
-                    reference_entity=reference,
-                    message_id=message_id,
-                    start_position=match['start'],
-                    end_position=match['end'],
-                    confidence=ref['confidence'],
-                    embedding=entity_embedding
-                )
-                
-                # Add markup
-                entity_tag = f'<entity id="{entity.id}">{match["text"]}</entity>'
-                start_pos = match['start'] + offset
-                end_pos = match['end'] + offset
-                marked_text = (
-                    marked_text[:start_pos] +
-                    entity_tag +
-                    marked_text[end_pos:]
-                )
-                
-                # Update offset for next iteration
-                offset += len(entity_tag) - len(match['text'])
-                
-                entities.append({
-                    'id': entity.id,
-                    'text': match['text'],
-                    'type': ref['archetype_name'],  # Use the prefetched archetype name
-                    'confidence': ref['confidence'],
-                    'start': match['start'],
-                    'end': match['end']
-                })
-                
-                processed_spans.add(span)
-                
-        return marked_text, entities 
+    def _get_context(self) -> str:
+        """Get the current context window."""
+        return self.context 

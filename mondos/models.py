@@ -1,5 +1,6 @@
 from django.db import models
 from polymorphic.models import PolymorphicModel
+from asgiref.sync import sync_to_async
 
 
 class Mondo(models.Model):
@@ -32,6 +33,16 @@ class Message(PolymorphicModel):
 
     def __str__(self):
         return f"{self.content[:50]}..."
+
+    @property
+    async def acontent(self):
+        """Async access to content field."""
+        return await sync_to_async(lambda: self.content)()
+
+    @property
+    async def aauthor(self):
+        """Async access to author field."""
+        return await sync_to_async(lambda: self.author)()
 
 
 class RoninMessage(Message):

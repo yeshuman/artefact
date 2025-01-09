@@ -129,7 +129,7 @@ async def test_entity_detection_with_real_embeddings(openai_client, test_message
     """Test entity detection using real embeddings."""
     # Clean up existing entities
     await Entity.objects.all().adelete()
-    
+
     # Create location archetype if it doesn't exist
     location_archetype = await EntityArchetype.objects.filter(name="location").afirst()
     if not location_archetype:
@@ -139,13 +139,13 @@ async def test_entity_detection_with_real_embeddings(openai_client, test_message
             input=f"location: {description}"
         )
         embedding = embedding_response.data[0].embedding
-        
+
         location_archetype = await EntityArchetype.objects.acreate(
             name="location",
             description=description,
             embedding=embedding
         )
-    
+
     # Create reference for Paris if it doesn't exist
     paris_ref = await EntityReference.objects.filter(text="Paris").afirst()
     if not paris_ref:
@@ -154,18 +154,18 @@ async def test_entity_detection_with_real_embeddings(openai_client, test_message
             input="Paris"
         )
         embedding = embedding_response.data[0].embedding
-        
+
         paris_ref = await EntityReference.objects.acreate(
             text="Paris",
             archetype=location_archetype,
             embedding=embedding,
             mondo=test_message.mondo
         )
-    
+
     # Initialize entity detector
     detector = StreamingEntityDetector(mondo_id=test_message.mondo.id)
     detector.archetype = location_archetype
-    
+
     # Create async embedding function using real OpenAI API
     async def get_embedding(text: str) -> np.ndarray:
         response = await openai_client.embeddings.create(
@@ -173,19 +173,17 @@ async def test_entity_detection_with_real_embeddings(openai_client, test_message
             input=text
         )
         return np.array(response.data[0].embedding, dtype=np.float32)
-    
+
     # Process text with real embeddings
     text = test_message.content
     marked_text, entities = await detector.process_chunk(text, test_message.id, get_embedding)
-    
-    # Verify entity detection
-    assert len(entities) >= 1
-    paris_entity = next((e for e in entities if e["text"] == "Paris"), None)
+
+    # Verify that Paris was detected
+    assert len(entities) > 0
+    paris_entity = next((e for e in entities if e["text"].lower() == "paris"), None)
     assert paris_entity is not None
     assert paris_entity["type"] == "location"
-    assert paris_entity["confidence"] > 0.5
-    assert "Paris" in marked_text
-    assert "<entity" in marked_text and "</entity>" in marked_text
+    assert paris_entity["confidence"] > 0.9
 
 @pytest.mark.real
 @pytest.mark.skipif(

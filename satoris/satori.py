@@ -7,6 +7,8 @@ from entities.services import StreamingEntityDetector
 from entities.models import EntityArchetype
 import numpy as np
 import logging
+import sys
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -122,83 +124,132 @@ class Satori(Sensei):
             await sync_to_async(self.model_obj.save)()
     
     async def respond(self, message: 'Message') -> 'SatoriMessage':
-        """Respond to a seeker's question with guidance.
+        """Generate a response to the given message with entity detection.
         
         Args:
             message: The message to respond to
             
         Returns:
-            Message: The guidance response
+            SatoriMessage: The response message with entity markup
         """
-        if not self.llm_client:
-            raise ValueError("Satori requires an LLM client to formulate responses")
+        # Get mondo context
+        mondo = message.mondo
         
-        # Get message content and mondo safely
-        content = await sync_to_async(lambda: message.content)()
-        mondo = await sync_to_async(lambda: message.mondo)()
+        # Get system prompt
+        system_prompt = await self.get_system_prompt()
         
-        # Get conversation history
-        messages = [msg async for msg in mondo.messages.all()]
-        history = []
-        for msg in messages:
-            msg_content = await sync_to_async(lambda: msg.content)()
-            msg_author = await sync_to_async(lambda: msg.author.name)()
-            role = "assistant" if isinstance(msg, SatoriMessage) else "user"
-            history.append({"role": role, "content": msg_content})
+        # Prepare conversation history
+        messages = [{
+            "role": "system",
+            "content": system_prompt
+        }]
+        
+        # Add previous messages for context
+        async for msg in message.mondo.messages.order_by('created_at'):
+            # Get message type safely
+            msg_type = await sync_to_async(lambda m=msg: m.__class__.__name__)()
+            role = "assistant" if msg_type == "SatoriMessage" else "user"
             
-        # Use LLM to generate guidance with conversation history
+            messages.append({
+                "role": role,
+                "content": await sync_to_async(lambda m=msg: m.content)()
+            })
+            
+        # Get streaming response from LLM
+        print("\nProcessing Satori response...", file=sys.stderr)
+        print(f"\nRonin's question: {await sync_to_async(lambda m=message: m.content)()}", file=sys.stderr)
+        print("\nGenerating response from LLM...", file=sys.stderr)
+        
         stream = await self.llm_client.chat.completions.create(
             model="gpt-4-1106-preview",
-            messages=[{
-                "role": "system",
-                "content": await self.get_system_prompt()
-            }] + history,
+            messages=messages,
             stream=True
         )
         
-        # Collect the full response first
+        # Initialize entity detector and get archetypes
+        detector = StreamingEntityDetector(mondo_id=mondo.id)
+        archetypes = await sync_to_async(list)(EntityArchetype.objects.all())
+        print(f"\nFound {len(archetypes)} archetypes to check", file=sys.stderr)
+
+        # Create embedding function using OpenAI with context
+        async def get_embedding_with_context(text: str) -> np.ndarray:
+            # Get context from detector's buffer
+            context = detector._get_context()
+            # Include surrounding context if available
+            input_text = f"{context} {text} {context}".strip() if context else text
+            response = await self.llm_client.embeddings.create(
+                model="text-embedding-ada-002",
+                input=input_text
+            )
+            return np.array(response.data[0].embedding, dtype=np.float32)
+
+        # Create the message first with empty content
+        response = await self.message(mondo, "")
+        
+        # Process the stream in real-time
         full_response = []
+        buffer = []  # Buffer for word completion
+        print("\nStreaming response with real-time entity detection:", file=sys.stderr)
+        
         async for chunk in stream:
             if hasattr(chunk.choices[0].delta, 'content'):
                 content_chunk = chunk.choices[0].delta.content
                 if content_chunk:
-                    logger.info(f"Satori response chunk: {content_chunk}")
-                    full_response.append(content_chunk)
-        
-        response_content = ''.join(full_response)
-        
-        # Create the message first
-        response = await self.message(mondo, response_content)
-        
-        # Initialize entity detector
-        detector = StreamingEntityDetector(mondo_id=mondo.id)
-        
-        # Get all archetypes for entity detection
-        archetypes = await sync_to_async(list)(EntityArchetype.objects.all())
-        
-        # Create embedding function using OpenAI
-        async def get_embedding(text: str) -> np.ndarray:
-            response = await self.llm_client.embeddings.create(
-                model="text-embedding-ada-002",
-                input=text
-            )
-            return np.array(response.data[0].embedding, dtype=np.float32)
-        
-        # Process the full response with each archetype
-        marked_content = response_content
-        for archetype in archetypes:
-            detector.archetype = archetype
-            marked_text, entities = await detector.process_chunk(
-                response_content,
-                response.id,  # Use the created message's ID
-                get_embedding
-            )
-            if entities:
-                marked_content = marked_text
-                logger.info(f"Detected entities: {entities}")
-        
-        # Update the message with marked-up content
-        response.content = marked_content
-        await sync_to_async(response.save)()
+                    print("\nReceived chunk:", content_chunk, file=sys.stderr)
+                    
+                    # Add to buffer and check if we have a complete word
+                    buffer.append(content_chunk)
+                    current_text = ''.join(buffer)
+                    
+                    # Process if we have a complete word (ends with space or punctuation)
+                    if current_text.strip() and (content_chunk[-1].isspace() or content_chunk[-1] in '.,!?;:'):
+                        marked_chunk = current_text
+                        
+                        # Track best archetype matches
+                        entity_matches = {}  # text -> {archetype, confidence, markup}
+                        
+                        # Process with each archetype
+                        for archetype in archetypes:
+                            detector.archetype = archetype
+                            marked_text, entities = await detector.process_chunk(
+                                marked_chunk,
+                                response.id,
+                                get_embedding_with_context
+                            )
+                            
+                            if entities:
+                                print(f"\nDetected entities with {await sync_to_async(lambda a=archetype: a.name)()}:", file=sys.stderr)
+                                for entity in entities:
+                                    print(f"  - {entity['text']} (confidence: {entity['confidence']:.2f})", file=sys.stderr)
+                                    
+                                    # Track best archetype match
+                                    if entity['text'] not in entity_matches or entity['confidence'] > entity_matches[entity['text']]['confidence']:
+                                        entity_matches[entity['text']] = {
+                                            'archetype': archetype,
+                                            'confidence': entity['confidence'],
+                                            'markup': f'<entity id="{entity["id"]}" type="{await sync_to_async(lambda a=archetype: a.name)()}">{entity["text"]}</entity>'
+                                        }
+                        
+                        # Apply best archetype matches
+                        final_chunk = marked_chunk
+                        for entity_text, match in entity_matches.items():
+                            pattern = re.compile(rf'\b{re.escape(entity_text)}\b', re.IGNORECASE)
+                            final_chunk = pattern.sub(match['markup'], final_chunk)
+                        
+                        print("\nProcessed chunk with markup:", final_chunk, file=sys.stderr)
+                        full_response.append(final_chunk)
+                        response.content = "".join(full_response)
+                        await response.asave()
+                        buffer = []  # Clear buffer
+                    else:
+                        # Keep collecting chunks if we don't have a complete word
+                        continue
+
+        if buffer:
+            remaining_text = ''.join(buffer)
+            if remaining_text.strip():
+                full_response.append(remaining_text)
+                response.content = "".join(full_response)
+                await response.asave()
         
         return response

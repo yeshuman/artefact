@@ -3,6 +3,7 @@ from django.conf import settings
 from pgvector.django import VectorField, IvfflatIndex, HnswIndex
 from django.db import connection
 from asgiref.sync import sync_to_async
+from django.contrib.postgres.fields import ArrayField
 
 
 class EntityArchetype(models.Model):
@@ -96,6 +97,16 @@ class EntityArchetype(models.Model):
         
         return await check_similar()
 
+    @property
+    async def adescription(self):
+        """Async access to description field."""
+        return self.description
+
+    @property
+    async def aembedding(self):
+        """Async access to embedding field."""
+        return self.embedding
+
 class EntityReference(models.Model):
     """
     A reference entity represents a canonical form of an entity that can be detected
@@ -129,6 +140,11 @@ class EntityReference(models.Model):
 
     def __str__(self):
         return f"{self.archetype.name}: {self.text}"
+
+    @property
+    async def aembedding(self):
+        """Async access to embedding field."""
+        return self.embedding
 
 class Entity(models.Model):
     """
