@@ -20,6 +20,7 @@ class StreamingEntityDetector:
         self.context_size = 1000  # Keep last 1000 chars
         self.similarity_threshold = 0.7  # Lower threshold for better recall
         self.seen_words = set()  # Track processed words
+        self.reference_confidence_threshold = 0.95  # Threshold for creating new reference entities
         
     async def process_chunk(self, text: str, message_id: int, get_embedding_fn) -> Tuple[str, List[Dict]]:
         """Process a chunk of text and detect entities."""
@@ -67,9 +68,10 @@ class StreamingEntityDetector:
                     marked_text[end_in_chunk:]
                 )
         
-        # Store detected entities
+        # Store detected entities and potentially create new reference entities
         for match in matches:
-            await Entity.objects.acreate(
+            # Store the detected entity
+            entity = await Entity.objects.acreate(
                 text=match["text"],
                 archetype=self.archetype,
                 message_id=message_id,
@@ -79,12 +81,35 @@ class StreamingEntityDetector:
                 reference_entity=match["reference_entity"],
                 embedding=match["embedding"]  # Store the embedding used for the match
             )
+            
+            # If this is a high confidence match and not already a reference,
+            # store it as a new reference entity
+            if match["confidence"] >= self.reference_confidence_threshold:
+                await self._store_as_reference(match)
         
         # Update incomplete word - capture any partial word at the end
         last_word_match = re.search(r'\w+$', text)
         self.incomplete_word = last_word_match.group() if last_word_match else ""
         
         return marked_text, matches
+        
+    async def _store_as_reference(self, match: Dict) -> None:
+        """Store a high-confidence match as a reference entity if it doesn't exist."""
+        # Check if this text is already a reference entity for this archetype
+        existing = await EntityReference.objects.filter(
+            text=match["text"],
+            archetype=self.archetype,
+            mondo_id=self.mondo_id
+        ).afirst()
+        
+        if not existing:
+            # Create new reference entity
+            await EntityReference.objects.acreate(
+                text=match["text"],
+                archetype=self.archetype,
+                mondo_id=self.mondo_id,
+                embedding=match["embedding"]
+            )
         
     async def _find_entities(
         self,
@@ -95,33 +120,22 @@ class StreamingEntityDetector:
     ) -> List[Dict]:
         """Find entities in a piece of text with the given offset."""
         matches = []
-        # Get all reference entities for this archetype
-        refs = [ref async for ref in EntityReference.objects.filter(archetype=self.archetype)]
         
-        # Create a pattern that matches any of the reference entity texts
-        # Allow for some variations in the text (e.g. "Louvre Museum" matches "Louvre")
-        ref_texts = []
-        for ref in refs:
-            parts = ref.text.split()
-            if len(parts) > 1:
-                # Add both full name and main part
-                ref_texts.append(re.escape(ref.text))
-                ref_texts.append(re.escape(parts[0]))
-            else:
-                ref_texts.append(re.escape(ref.text))
-        
-        pattern = r'\b(?:' + '|'.join(ref_texts) + r')\b'
-        words = re.finditer(pattern, text, re.IGNORECASE)
+        # First try to find entities based on archetype similarity
+        # Split text into words first
+        words = re.finditer(r'\b\w+\b', text)
         
         for word_match in words:
             word = word_match.group()
             chunk_start = word_match.start()
             
+            print(f"\nProcessing word: {word}", file=sys.stderr)
+            
             # Skip if we've already processed this word at this position
             word_key = f"{word}_{offset + chunk_start}"
             if word_key in self.seen_words:
+                print(f"Skipping already seen word: {word}", file=sys.stderr)
                 continue
-            self.seen_words.add(word_key)
             
             # Get embedding for word
             embedding_result = get_embedding_fn(word)
@@ -130,25 +144,49 @@ class StreamingEntityDetector:
             else:
                 embedding = embedding_result
             
-            # Find the matching reference entity
-            # Match either exact text or first word
-            ref = next(
-                r for r in refs 
-                if r.text.lower() == word.lower() or r.text.lower().startswith(word.lower())
-            )
+            # Calculate similarity with archetype
+            archetype_embedding = np.array(self.archetype.embedding, dtype=np.float32)
+            archetype_similarity = cosine_similarity(
+                [embedding],
+                [archetype_embedding]
+            )[0][0]
             
-            # Create the match with exact match confidence
-            match = {
-                "text": word,
-                "type": self.archetype.name,
-                "confidence": 1.0 if ref.text.lower() == word.lower() else 0.9,
-                "id": str(uuid.uuid4()),
-                "start_position": offset + chunk_start,
-                "end_position": offset + chunk_start + len(word),
-                "reference_entity": ref,
-                "embedding": embedding
-            }
-            matches.append(match)
+            print(f"Archetype similarity for {word}: {archetype_similarity}", file=sys.stderr)
+            
+            # If word is similar enough to archetype, check reference entities
+            if archetype_similarity >= self.similarity_threshold:
+                print(f"Word {word} passed archetype threshold", file=sys.stderr)
+                # Get all reference entities for this archetype
+                refs = [ref async for ref in EntityReference.objects.filter(archetype=self.archetype)]
+                
+                # Find best matching reference if any
+                best_ref = None
+                best_similarity = 0
+                
+                for ref in refs:
+                    ref_embedding = np.array(ref.embedding, dtype=np.float32)
+                    similarity = cosine_similarity([embedding], [ref_embedding])[0][0]
+                    print(f"Reference similarity for {word} with {ref.text}: {similarity}", file=sys.stderr)
+                    if similarity > best_similarity:
+                        best_similarity = similarity
+                        best_ref = ref
+                
+                # Create match with appropriate confidence
+                match = {
+                    "text": word,
+                    "type": self.archetype.name,
+                    "confidence": best_similarity if best_ref else archetype_similarity,
+                    "id": str(uuid.uuid4()),
+                    "start_position": offset + chunk_start,
+                    "end_position": offset + chunk_start + len(word),
+                    "reference_entity": best_ref,
+                    "embedding": embedding
+                }
+                matches.append(match)
+                self.seen_words.add(word_key)
+                print(f"Added match for {word}", file=sys.stderr)
+            else:
+                print(f"Word {word} failed archetype threshold", file=sys.stderr)
                 
         return matches
         

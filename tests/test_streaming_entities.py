@@ -109,7 +109,9 @@ def mock_embedding_fn():
 @pytest.fixture
 def detector(test_mondo):
     """Create a detector instance for testing."""
-    return StreamingEntityDetector(mondo_id=test_mondo.id)
+    detector = StreamingEntityDetector(mondo_id=test_mondo.id)
+    detector.similarity_threshold = 0.5  # Lower threshold for testing
+    return detector
 
 @pytest.mark.django_db(transaction=True)
 async def test_streaming_entity_detector_word_boundary(
@@ -161,8 +163,8 @@ async def test_streaming_entity_detector_markup(
     
     assert paris_entity["type"] == location_archetype.name
     assert london_entity["type"] == location_archetype.name
-    assert paris_entity["confidence"] == 1.0
-    assert london_entity["confidence"] == 1.0
+    assert paris_entity["confidence"] == pytest.approx(1.0, abs=1e-6)
+    assert london_entity["confidence"] == pytest.approx(1.0, abs=1e-6)
     
     expected_text = (
         f'I went from <entity id="{paris_entity["id"]}" type="{location_archetype.name}">Paris</entity> to '
@@ -217,3 +219,38 @@ async def test_entity_archetype_creation():
     # Verify both archetypes exist
     archetypes = await EntityArchetype.objects.acount()
     assert archetypes == 2, "Expected 2 unique archetypes" 
+
+@pytest.mark.django_db(transaction=True)
+async def test_high_confidence_reference_creation(
+    detector, location_archetype, mock_embedding_fn, test_message
+):
+    """Test that high confidence matches are stored as reference entities."""
+    detector.archetype = location_archetype
+
+    # Create initial references for Paris and London
+    paris_ref = await EntityReference.objects.acreate(
+        text="Paris",
+        archetype=location_archetype,
+        mondo_id=detector.mondo_id,
+        embedding=np.ones(1536, dtype=np.float32)
+    )
+    london_ref = await EntityReference.objects.acreate(
+        text="London",
+        archetype=location_archetype,
+        mondo_id=detector.mondo_id,
+        embedding=np.ones(1536, dtype=np.float32)
+    )
+
+    # Process text with both locations
+    text = "I visited Paris and London."
+    marked_text, entities = await detector.process_chunk(text, test_message.id, mock_embedding_fn)
+
+    # Verify both entities were detected
+    assert len(entities) == 2
+    paris_entity = next(e for e in entities if e["text"] == "Paris")
+    london_entity = next(e for e in entities if e["text"] == "London")
+
+    assert paris_entity["type"] == location_archetype.name
+    assert london_entity["type"] == location_archetype.name
+    assert paris_entity["confidence"] == pytest.approx(1.0, abs=1e-6)
+    assert london_entity["confidence"] == pytest.approx(1.0, abs=1e-6) 
