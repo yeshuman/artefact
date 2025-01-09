@@ -254,3 +254,75 @@ async def test_high_confidence_reference_creation(
     assert london_entity["type"] == location_archetype.name
     assert paris_entity["confidence"] == pytest.approx(1.0, abs=1e-6)
     assert london_entity["confidence"] == pytest.approx(1.0, abs=1e-6) 
+
+@pytest.mark.django_db(transaction=True)
+async def test_reference_entity_storage_threshold(
+    detector, location_archetype, mock_embedding_fn, test_message
+):
+    """Test that only high confidence matches are stored as reference entities."""
+    detector.archetype = location_archetype
+    
+    # Create initial reference for Paris
+    paris_ref = await EntityReference.objects.acreate(
+        text="Paris",
+        archetype=location_archetype,
+        mondo_id=detector.mondo_id,
+        embedding=np.ones(1536, dtype=np.float32)
+    )
+    
+    # Process text with a high confidence match (Paris) and a lower confidence match
+    text = "I visited Paris and Berlin."
+    marked_text, entities = await detector.process_chunk(text, test_message.id, mock_embedding_fn)
+    
+    # Verify both entities were detected
+    assert len(entities) == 1  # Only Paris should be detected
+    paris_entity = entities[0]
+    assert paris_entity["text"] == "Paris"
+    assert paris_entity["confidence"] == pytest.approx(1.0, abs=1e-6)
+    
+    # Verify no new reference was created for Berlin (lower confidence)
+    berlin_refs = await EntityReference.objects.filter(
+        text="Berlin",
+        archetype=location_archetype,
+        mondo_id=detector.mondo_id
+    ).acount()
+    assert berlin_refs == 0
+
+@pytest.mark.django_db(transaction=True)
+async def test_multi_word_entity_detection(
+    detector, location_archetype, test_message
+):
+    """Test detection of multi-word entities."""
+    detector.archetype = location_archetype
+    
+    # Create reference for multi-word location
+    new_york_ref = await EntityReference.objects.acreate(
+        text="New York",
+        archetype=location_archetype,
+        mondo_id=detector.mondo_id,
+        embedding=np.ones(1536, dtype=np.float32)
+    )
+    
+    # Create custom embedding function for multi-word test
+    async def multi_word_embedding_fn(text: str) -> np.ndarray:
+        if text.lower() in ["new york", "new", "york"]:
+            return np.ones(1536, dtype=np.float32)
+        return np.zeros(1536, dtype=np.float32)
+    
+    # Process text with multi-word entity
+    text = "I love New York City."
+    marked_text, entities = await detector.process_chunk(text, test_message.id, multi_word_embedding_fn)
+    
+    # Verify entity was detected
+    assert len(entities) == 1
+    ny_entity = entities[0]
+    assert ny_entity["text"] == "New York"
+    assert ny_entity["type"] == location_archetype.name
+    assert ny_entity["confidence"] == pytest.approx(1.0, abs=1e-6)
+    
+    # Verify markup
+    expected_text = (
+        f'I love <entity id="{ny_entity["id"]}" type="{location_archetype.name}">'
+        f'New York</entity> City.'
+    )
+    assert marked_text == expected_text 

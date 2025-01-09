@@ -122,12 +122,85 @@ class StreamingEntityDetector:
         matches = []
         
         # First try to find entities based on archetype similarity
-        # Split text into words first
-        words = re.finditer(r'\b\w+\b', text)
+        # Get all reference entities for this archetype
+        refs = [ref async for ref in EntityReference.objects.filter(archetype=self.archetype)]
         
+        # Create patterns for multi-word and single-word matches
+        multi_word_refs = [ref for ref in refs if len(ref.text.split()) > 1]
+        single_word_refs = [ref for ref in refs if len(ref.text.split()) == 1]
+        
+        # First try to match multi-word references
+        for ref in multi_word_refs:
+            pattern = re.compile(rf'\b{re.escape(ref.text)}\b', re.IGNORECASE)
+            for match in pattern.finditer(text):
+                word = match.group()
+                chunk_start = match.start()
+                
+                print(f"\nProcessing multi-word: {word}", file=sys.stderr)
+                
+                # Skip if we've already processed this word at this position
+                word_key = f"{word}_{offset + chunk_start}"
+                if word_key in self.seen_words:
+                    print(f"Skipping already seen word: {word}", file=sys.stderr)
+                    continue
+                
+                # Get embedding for word
+                embedding_result = get_embedding_fn(word)
+                if asyncio.iscoroutine(embedding_result):
+                    embedding = await embedding_result
+                else:
+                    embedding = embedding_result
+                
+                # Calculate similarity with archetype
+                archetype_embedding = np.array(self.archetype.embedding, dtype=np.float32)
+                archetype_similarity = cosine_similarity(
+                    [embedding],
+                    [archetype_embedding]
+                )[0][0]
+                
+                print(f"Archetype similarity for {word}: {archetype_similarity}", file=sys.stderr)
+                
+                # If word is similar enough to archetype, create match
+                if archetype_similarity >= self.similarity_threshold:
+                    print(f"Word {word} passed archetype threshold", file=sys.stderr)
+                    
+                    # Calculate similarity with reference
+                    ref_embedding = np.array(ref.embedding, dtype=np.float32)
+                    similarity = cosine_similarity([embedding], [ref_embedding])[0][0]
+                    print(f"Reference similarity for {word} with {ref.text}: {similarity}", file=sys.stderr)
+                    
+                    # Create match
+                    match = {
+                        "text": word,
+                        "type": self.archetype.name,
+                        "confidence": similarity,
+                        "id": str(uuid.uuid4()),
+                        "start_position": offset + chunk_start,
+                        "end_position": offset + chunk_start + len(word),
+                        "reference_entity": ref,
+                        "embedding": embedding
+                    }
+                    matches.append(match)
+                    self.seen_words.add(word_key)
+                    print(f"Added match for {word}", file=sys.stderr)
+                else:
+                    print(f"Word {word} failed archetype threshold", file=sys.stderr)
+        
+        # Then try to match single words, but only in positions not covered by multi-word matches
+        covered_positions = set()
+        for match in matches:
+            for pos in range(match["start_position"], match["end_position"]):
+                covered_positions.add(pos)
+        
+        # Find single words
+        words = re.finditer(r'\b\w+\b', text)
         for word_match in words:
             word = word_match.group()
             chunk_start = word_match.start()
+            
+            # Skip if position is covered by a multi-word match
+            if any(offset + chunk_start + i in covered_positions for i in range(len(word))):
+                continue
             
             print(f"\nProcessing word: {word}", file=sys.stderr)
             
@@ -156,14 +229,12 @@ class StreamingEntityDetector:
             # If word is similar enough to archetype, check reference entities
             if archetype_similarity >= self.similarity_threshold:
                 print(f"Word {word} passed archetype threshold", file=sys.stderr)
-                # Get all reference entities for this archetype
-                refs = [ref async for ref in EntityReference.objects.filter(archetype=self.archetype)]
                 
                 # Find best matching reference if any
                 best_ref = None
                 best_similarity = 0
                 
-                for ref in refs:
+                for ref in single_word_refs:
                     ref_embedding = np.array(ref.embedding, dtype=np.float32)
                     similarity = cosine_similarity([embedding], [ref_embedding])[0][0]
                     print(f"Reference similarity for {word} with {ref.text}: {similarity}", file=sys.stderr)
