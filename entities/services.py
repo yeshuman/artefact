@@ -18,9 +18,14 @@ class StreamingEntityDetector:
         self.context = ""
         self.incomplete_word = ""
         self.context_size = 1000  # Keep last 1000 chars
-        self.similarity_threshold = 0.7  # Lower threshold for better recall
+        self.similarity_threshold = 0.65  # Lower base threshold for archetype matching
+        self.reference_similarity_threshold = 0.70  # Lower base threshold for reference matching
+        self.exact_match_bonus = 0.1  # Base bonus for exact text matches
         self.seen_words = set()  # Track processed words
         self.reference_confidence_threshold = 0.95  # Threshold for creating new reference entities
+        self.min_references_for_bonus = 3  # Minimum references needed for bonus
+        self.max_references_for_bonus = 10  # Maximum references considered for bonus
+        self.reference_bonus_factor = 0.02  # Additional confidence per reference
         
     async def process_chunk(self, text: str, message_id: int, get_embedding_fn) -> Tuple[str, List[Dict]]:
         """Process a chunk of text and detect entities."""
@@ -55,6 +60,9 @@ class StreamingEntityDetector:
         )
         matches.extend(text_matches)
         
+        # Filter out matches with low confidence
+        matches = [m for m in matches if m["confidence"] >= self.reference_similarity_threshold]
+        
         # Add markup for detected entities
         marked_text = text
         # Sort matches by position in reverse to avoid markup interference
@@ -69,29 +77,35 @@ class StreamingEntityDetector:
                 )
         
         # Store detected entities and potentially create new reference entities
+        stored_matches = []
         for match in matches:
-            # Store the detected entity
-            entity = await Entity.objects.acreate(
-                text=match["text"],
-                archetype=self.archetype,
-                message_id=message_id,
-                confidence=match["confidence"],
-                start_position=match["start_position"],
-                end_position=match["end_position"],
-                reference_entity=match["reference_entity"],
-                embedding=match["embedding"]  # Store the embedding used for the match
-            )
-            
-            # If this is a high confidence match and not already a reference,
-            # store it as a new reference entity
-            if match["confidence"] >= self.reference_confidence_threshold:
-                await self._store_as_reference(match)
+            try:
+                # Store the detected entity
+                entity = await Entity.objects.acreate(
+                    text=match["text"],
+                    archetype=self.archetype,
+                    message_id=message_id,
+                    confidence=match["confidence"],
+                    start_position=match["start_position"],
+                    end_position=match["end_position"],
+                    reference_entity=match["reference_entity"],
+                    embedding=match["embedding"]  # Store the embedding used for the match
+                )
+                stored_matches.append(match)
+                
+                # If this is a high confidence match and not already a reference,
+                # store it as a new reference entity
+                if match["confidence"] >= self.reference_confidence_threshold:
+                    await self._store_as_reference(match)
+            except Exception as e:
+                print(f"Error storing entity: {e}", file=sys.stderr)
+                continue
         
         # Update incomplete word - capture any partial word at the end
         last_word_match = re.search(r'\w+$', text)
         self.incomplete_word = last_word_match.group() if last_word_match else ""
         
-        return marked_text, matches
+        return marked_text, stored_matches
         
     async def _store_as_reference(self, match: Dict) -> None:
         """Store a high-confidence match as a reference entity if it doesn't exist."""
@@ -111,6 +125,21 @@ class StreamingEntityDetector:
                 embedding=match["embedding"]
             )
         
+    async def _calculate_confidence(self, ref_similarity: float, num_references: int) -> float:
+        """Calculate final confidence score taking into account number of references."""
+        # Start with base reference similarity
+        confidence = ref_similarity
+        
+        # Add bonus based on number of references if we have more than minimum
+        if num_references >= self.min_references_for_bonus:
+            # Calculate bonus factor based on number of references
+            bonus_references = min(num_references - self.min_references_for_bonus, 
+                                 self.max_references_for_bonus - self.min_references_for_bonus)
+            reference_bonus = bonus_references * self.reference_bonus_factor
+            confidence += reference_bonus
+        
+        return min(confidence, 1.0)  # Cap at 1.0
+
     async def _find_entities(
         self,
         text: str,
@@ -121,9 +150,9 @@ class StreamingEntityDetector:
         """Find entities in a piece of text with the given offset."""
         matches = []
         
-        # First try to find entities based on archetype similarity
         # Get all reference entities for this archetype
         refs = [ref async for ref in EntityReference.objects.filter(archetype=self.archetype)]
+        num_references = len(refs)
         
         # Create patterns for multi-word and single-word matches
         multi_word_refs = [ref for ref in refs if len(ref.text.split()) > 1]
@@ -160,20 +189,29 @@ class StreamingEntityDetector:
                 
                 print(f"Archetype similarity for {word}: {archetype_similarity}", file=sys.stderr)
                 
-                # If word is similar enough to archetype, create match
-                if archetype_similarity >= self.similarity_threshold:
-                    print(f"Word {word} passed archetype threshold", file=sys.stderr)
-                    
-                    # Calculate similarity with reference
-                    ref_embedding = np.array(ref.embedding, dtype=np.float32)
-                    similarity = cosine_similarity([embedding], [ref_embedding])[0][0]
-                    print(f"Reference similarity for {word} with {ref.text}: {similarity}", file=sys.stderr)
+                # Calculate similarity with reference
+                ref_embedding = np.array(ref.embedding, dtype=np.float32)
+                ref_similarity = cosine_similarity([embedding], [ref_embedding])[0][0]
+                print(f"Reference similarity for {word} with {ref.text}: {ref_similarity}", file=sys.stderr)
+                
+                # Apply exact match bonus
+                if word.lower() == ref.text.lower():
+                    ref_similarity += self.exact_match_bonus
+                    print(f"Applied exact match bonus for {word}", file=sys.stderr)
+                
+                # Calculate final confidence with reference bonus
+                confidence = await self._calculate_confidence(ref_similarity, num_references)
+                print(f"Final confidence for {word}: {confidence}", file=sys.stderr)
+                
+                # If word is similar enough to both archetype and reference, create match
+                if archetype_similarity >= self.similarity_threshold and confidence >= self.reference_similarity_threshold:
+                    print(f"Word {word} passed both thresholds", file=sys.stderr)
                     
                     # Create match
                     match = {
                         "text": word,
                         "type": self.archetype.name,
-                        "confidence": similarity,
+                        "confidence": confidence,
                         "id": str(uuid.uuid4()),
                         "start_position": offset + chunk_start,
                         "end_position": offset + chunk_start + len(word),
@@ -184,23 +222,13 @@ class StreamingEntityDetector:
                     self.seen_words.add(word_key)
                     print(f"Added match for {word}", file=sys.stderr)
                 else:
-                    print(f"Word {word} failed archetype threshold", file=sys.stderr)
+                    print(f"Word {word} failed thresholds", file=sys.stderr)
         
-        # Then try to match single words, but only in positions not covered by multi-word matches
-        covered_positions = set()
-        for match in matches:
-            for pos in range(match["start_position"], match["end_position"]):
-                covered_positions.add(pos)
-        
-        # Find single words
+        # Then try to match single words
         words = re.finditer(r'\b\w+\b', text)
         for word_match in words:
             word = word_match.group()
             chunk_start = word_match.start()
-            
-            # Skip if position is covered by a multi-word match
-            if any(offset + chunk_start + i in covered_positions for i in range(len(word))):
-                continue
             
             print(f"\nProcessing word: {word}", file=sys.stderr)
             
@@ -234,31 +262,45 @@ class StreamingEntityDetector:
                 best_ref = None
                 best_similarity = 0
                 
-                for ref in single_word_refs:
+                for ref in refs:  # Check against all references, not just single-word ones
                     ref_embedding = np.array(ref.embedding, dtype=np.float32)
                     similarity = cosine_similarity([embedding], [ref_embedding])[0][0]
                     print(f"Reference similarity for {word} with {ref.text}: {similarity}", file=sys.stderr)
+                    
+                    # Apply exact match bonus
+                    if word.lower() == ref.text.lower():
+                        similarity += self.exact_match_bonus
+                        print(f"Applied exact match bonus for {word}", file=sys.stderr)
+                    
                     if similarity > best_similarity:
                         best_similarity = similarity
                         best_ref = ref
                 
-                # Create match with appropriate confidence
-                match = {
-                    "text": word,
-                    "type": self.archetype.name,
-                    "confidence": best_similarity if best_ref else archetype_similarity,
-                    "id": str(uuid.uuid4()),
-                    "start_position": offset + chunk_start,
-                    "end_position": offset + chunk_start + len(word),
-                    "reference_entity": best_ref,
-                    "embedding": embedding
-                }
-                matches.append(match)
-                self.seen_words.add(word_key)
-                print(f"Added match for {word}", file=sys.stderr)
-            else:
-                print(f"Word {word} failed archetype threshold", file=sys.stderr)
-                
+                if best_ref:
+                    # Calculate final confidence with reference bonus
+                    confidence = await self._calculate_confidence(best_similarity, num_references)
+                    print(f"Final confidence for {word}: {confidence}", file=sys.stderr)
+                    
+                    if confidence >= self.reference_similarity_threshold:
+                        # Create match
+                        match = {
+                            "text": word,
+                            "type": self.archetype.name,
+                            "confidence": confidence,
+                            "id": str(uuid.uuid4()),
+                            "start_position": offset + chunk_start,
+                            "end_position": offset + chunk_start + len(word),
+                            "reference_entity": best_ref,
+                            "embedding": embedding
+                        }
+                        matches.append(match)
+                        self.seen_words.add(word_key)
+                        print(f"Added match for {word}", file=sys.stderr)
+                    else:
+                        print(f"Word {word} failed confidence threshold", file=sys.stderr)
+                else:
+                    print(f"No good reference match found for {word}", file=sys.stderr)
+        
         return matches
         
     def _get_context(self) -> str:
