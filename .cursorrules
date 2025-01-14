@@ -21,6 +21,25 @@ style:
 
 # Documentation Requirements
 docs:
+  structure:
+    session:
+      - context.md
+      - changes.md
+      - evaluation.md
+    product:
+      - context.md
+      - architecture.md
+      - technical.md
+      - progress.md
+  update_triggers:
+    session:
+      - code_changes: true
+      - memory_update: true
+      - task_switch: true
+    product:
+      - task_completion: true
+      - feature_implementation: true
+      - architecture_change: true
   required_sections:
     - Purpose
     - Parameters
