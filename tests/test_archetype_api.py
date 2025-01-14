@@ -74,24 +74,25 @@ async def test_message(test_mondo, test_ronin):
         author=test_ronin
     )
 
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.real
-async def test_entity_detection_with_real_embeddings(openai_client, test_message):
-    """Test detecting entities using real embeddings and similarity matching."""
-    # Create a location archetype first
+@pytest.fixture
+async def location_archetype(openai_client):
+    """Create a location archetype for testing."""
     description = "Geographic locations like cities, countries, and landmarks"
     embedding = await openai_client.embeddings.create(
         model="text-embedding-ada-002",
         input=description
     )
     
-    # Create test objects
-    archetype = await EntityArchetype.objects.acreate(
+    return await EntityArchetype.objects.acreate(
         name="Location.Geographic",
         description=description,
         embedding=embedding.data[0].embedding
     )
-    
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.real
+async def test_entity_detection_with_real_embeddings(openai_client, test_message, location_archetype):
+    """Test detecting entities using real embeddings and similarity matching."""
     # Create reference for Paris
     paris_embedding = await openai_client.embeddings.create(
         model="text-embedding-ada-002",
@@ -99,14 +100,14 @@ async def test_entity_detection_with_real_embeddings(openai_client, test_message
     )
     await EntityReference.objects.acreate(
         text="Paris",
-        archetype=archetype,
+        archetype=location_archetype,
         mondo=test_message.mondo,
         embedding=paris_embedding.data[0].embedding
     )
     
     # Create a detector
     detector = StreamingEntityDetector(mondo_id=test_message.mondo.id)
-    detector.archetype = archetype
+    detector.archetype = location_archetype
     
     # Test detection in text with a similar but non-exact location
     text = "I would love to visit the French capital someday."
@@ -144,7 +145,7 @@ async def test_entity_detection_with_real_embeddings(openai_client, test_message
         )
         await EntityReference.objects.acreate(
             text=location,
-            archetype=archetype,
+            archetype=location_archetype,
             mondo=test_message.mondo,
             embedding=location_embedding.data[0].embedding
         )
@@ -174,22 +175,8 @@ async def test_entity_detection_with_real_embeddings(openai_client, test_message
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.real
-async def test_context_aware_entity_detection(openai_client, test_message):
+async def test_context_aware_entity_detection(openai_client, test_message, location_archetype):
     """Test entity detection with context awareness."""
-    # Create a location archetype
-    description = "Geographic locations like cities, countries, and landmarks"
-    embedding = await openai_client.embeddings.create(
-        model="text-embedding-ada-002",
-        input=description
-    )
-    
-    # Create test objects
-    archetype = await EntityArchetype.objects.acreate(
-        name="Location.Geographic",
-        description=description,
-        embedding=embedding.data[0].embedding
-    )
-    
     # Create initial reference for Paris
     paris_embedding = await openai_client.embeddings.create(
         model="text-embedding-ada-002",
@@ -197,14 +184,14 @@ async def test_context_aware_entity_detection(openai_client, test_message):
     )
     await EntityReference.objects.acreate(
         text="Paris",
-        archetype=archetype,
+        archetype=location_archetype,
         mondo=test_message.mondo,
         embedding=paris_embedding.data[0].embedding
     )
     
     # Create a detector
     detector = StreamingEntityDetector(mondo_id=test_message.mondo.id)
-    detector.archetype = archetype
+    detector.archetype = location_archetype
     
     # Test detection with initial reference
     text = "While in the city of lights, I visited a famous museum. The museum was amazing."
@@ -241,7 +228,7 @@ async def test_context_aware_entity_detection(openai_client, test_message):
         )
         await EntityReference.objects.acreate(
             text=ref_text,
-            archetype=archetype,
+            archetype=location_archetype,
             mondo=test_message.mondo,
             embedding=ref_embedding.data[0].embedding
         )

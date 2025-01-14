@@ -18,14 +18,16 @@ class StreamingEntityDetector:
         self.context = ""
         self.incomplete_word = ""
         self.context_size = 1000  # Keep last 1000 chars
-        self.similarity_threshold = 0.65  # Lower base threshold for archetype matching
-        self.reference_similarity_threshold = 0.70  # Lower base threshold for reference matching
-        self.exact_match_bonus = 0.1  # Base bonus for exact text matches
+        self.similarity_threshold = 0.60  # Lower base threshold for archetype matching
+        self.reference_similarity_threshold = 0.65  # Lower base threshold for reference matching
+        self.exact_match_bonus = 0.15  # Increased bonus for exact text matches
         self.seen_words = set()  # Track processed words
         self.reference_confidence_threshold = 0.95  # Threshold for creating new reference entities
-        self.min_references_for_bonus = 3  # Minimum references needed for bonus
+        self.min_references_for_bonus = 2  # Reduced minimum references needed for bonus
         self.max_references_for_bonus = 10  # Maximum references considered for bonus
-        self.reference_bonus_factor = 0.02  # Additional confidence per reference
+        self.reference_bonus_factor = 0.05  # Increased bonus factor per reference
+        self.archetype_weight = 0.4  # Weight for archetype similarity
+        self.reference_weight = 0.6  # Weight for reference similarity
         
     async def process_chunk(self, text: str, message_id: int, get_embedding_fn) -> Tuple[str, List[Dict]]:
         """Process a chunk of text and detect entities."""
@@ -125,20 +127,32 @@ class StreamingEntityDetector:
                 embedding=match["embedding"]
             )
         
-    async def _calculate_confidence(self, ref_similarity: float, num_references: int) -> float:
-        """Calculate final confidence score taking into account number of references."""
-        # Start with base reference similarity
-        confidence = ref_similarity
+    async def _calculate_confidence(self, ref_similarity: float, archetype_similarity: float, num_references: int) -> float:
+        """Calculate final confidence score taking into account archetype similarity, reference similarity, and number of references."""
+        # Increase weight for reference similarity to give more importance to known entities
+        self.archetype_weight = 0.35  # Slightly reduce archetype weight
+        self.reference_weight = 0.65  # Increase reference weight
+        
+        # Calculate weighted similarity with increased emphasis on reference matching
+        weighted_similarity = (self.archetype_weight * archetype_similarity + 
+                             self.reference_weight * ref_similarity)
         
         # Add bonus based on number of references if we have more than minimum
         if num_references >= self.min_references_for_bonus:
             # Calculate bonus factor based on number of references
             bonus_references = min(num_references - self.min_references_for_bonus, 
-                                 self.max_references_for_bonus - self.min_references_for_bonus)
+                               self.max_references_for_bonus - self.min_references_for_bonus)
+            # Increase reference bonus factor for stronger differentiation
+            self.reference_bonus_factor = 0.08  # Increased from 0.05
             reference_bonus = bonus_references * self.reference_bonus_factor
-            confidence += reference_bonus
+            weighted_similarity = weighted_similarity * (1.0 + reference_bonus)
         
-        return min(confidence, 1.0)  # Cap at 1.0
+        # Add a small bonus for very high archetype similarity
+        if archetype_similarity > 0.8:
+            archetype_bonus = 0.1 * (archetype_similarity - 0.8)  # Up to 0.1 bonus for perfect match
+            weighted_similarity += archetype_bonus
+        
+        return min(weighted_similarity, 1.0)  # Cap at 1.0
 
     async def _find_entities(
         self,
@@ -158,19 +172,18 @@ class StreamingEntityDetector:
         multi_word_refs = [ref for ref in refs if len(ref.text.split()) > 1]
         single_word_refs = [ref for ref in refs if len(ref.text.split()) == 1]
         
-        # First try to match multi-word references
+        # First try to match multi-word references with a lower initial threshold
+        self.similarity_threshold = 0.55  # Lower threshold for initial matching
+        
         for ref in multi_word_refs:
             pattern = re.compile(rf'\b{re.escape(ref.text)}\b', re.IGNORECASE)
             for match in pattern.finditer(text):
                 word = match.group()
                 chunk_start = match.start()
                 
-                print(f"\nProcessing multi-word: {word}", file=sys.stderr)
-                
                 # Skip if we've already processed this word at this position
                 word_key = f"{word}_{offset + chunk_start}"
                 if word_key in self.seen_words:
-                    print(f"Skipping already seen word: {word}", file=sys.stderr)
                     continue
                 
                 # Get embedding for word
@@ -187,26 +200,19 @@ class StreamingEntityDetector:
                     [archetype_embedding]
                 )[0][0]
                 
-                print(f"Archetype similarity for {word}: {archetype_similarity}", file=sys.stderr)
-                
                 # Calculate similarity with reference
                 ref_embedding = np.array(ref.embedding, dtype=np.float32)
                 ref_similarity = cosine_similarity([embedding], [ref_embedding])[0][0]
-                print(f"Reference similarity for {word} with {ref.text}: {ref_similarity}", file=sys.stderr)
                 
                 # Apply exact match bonus
                 if word.lower() == ref.text.lower():
                     ref_similarity += self.exact_match_bonus
-                    print(f"Applied exact match bonus for {word}", file=sys.stderr)
                 
                 # Calculate final confidence with reference bonus
-                confidence = await self._calculate_confidence(ref_similarity, num_references)
-                print(f"Final confidence for {word}: {confidence}", file=sys.stderr)
+                confidence = await self._calculate_confidence(ref_similarity, archetype_similarity, num_references)
                 
                 # If word is similar enough to both archetype and reference, create match
                 if archetype_similarity >= self.similarity_threshold and confidence >= self.reference_similarity_threshold:
-                    print(f"Word {word} passed both thresholds", file=sys.stderr)
-                    
                     # Create match
                     match = {
                         "text": word,
@@ -220,22 +226,96 @@ class StreamingEntityDetector:
                     }
                     matches.append(match)
                     self.seen_words.add(word_key)
-                    print(f"Added match for {word}", file=sys.stderr)
-                else:
-                    print(f"Word {word} failed thresholds", file=sys.stderr)
         
-        # Then try to match single words
-        words = re.finditer(r'\b\w+\b', text)
-        for word_match in words:
+        # Then try to match phrases in text with context-aware thresholds
+        words = text.split()
+        for i in range(len(words)):
+            for j in range(i + 1, min(i + 5, len(words) + 1)):  # Look at phrases up to 4 words
+                phrase = " ".join(words[i:j])
+                chunk_start = text.find(phrase, text.find(" ".join(words[:i])) if i > 0 else 0)
+                
+                # Skip if we've already processed this phrase at this position
+                word_key = f"{phrase}_{offset + chunk_start}"
+                if word_key in self.seen_words:
+                    continue
+                
+                # Get embedding for phrase
+                embedding_result = get_embedding_fn(phrase)
+                if asyncio.iscoroutine(embedding_result):
+                    embedding = await embedding_result
+                else:
+                    embedding = embedding_result
+                
+                # Calculate similarity with archetype
+                archetype_embedding = np.array(self.archetype.embedding, dtype=np.float32)
+                archetype_similarity = cosine_similarity(
+                    [embedding],
+                    [archetype_embedding]
+                )[0][0]
+                
+                # Adjust threshold based on phrase length and context
+                phrase_threshold = max(
+                    self.similarity_threshold - (0.05 * (len(phrase.split()) - 1)),  # Lower threshold for longer phrases
+                    0.45  # But not lower than this
+                )
+                
+                # If phrase is similar enough to archetype, check reference entities
+                if archetype_similarity >= phrase_threshold:
+                    # Find best matching reference if any
+                    best_ref = None
+                    best_similarity = 0
+                    
+                    for ref in refs:
+                        ref_embedding = np.array(ref.embedding, dtype=np.float32)
+                        similarity = cosine_similarity([embedding], [ref_embedding])[0][0]
+                        
+                        # Apply exact match bonus
+                        if phrase.lower() == ref.text.lower():
+                            similarity += self.exact_match_bonus
+                        # Apply partial match bonus for overlapping terms
+                        elif any(word.lower() in ref.text.lower() or ref.text.lower() in word.lower() 
+                               for word in phrase.split()):
+                            similarity += self.exact_match_bonus * 0.5
+                        
+                        if similarity > best_similarity:
+                            best_similarity = similarity
+                            best_ref = ref
+                    
+                    if best_ref:
+                        # Calculate final confidence with reference bonus
+                        confidence = await self._calculate_confidence(best_similarity, archetype_similarity, num_references)
+                        
+                        # Lower confidence threshold for longer phrases
+                        phrase_confidence_threshold = max(
+                            self.reference_similarity_threshold - (0.05 * (len(phrase.split()) - 1)),
+                            0.55  # But not lower than this
+                        )
+                        
+                        if confidence >= phrase_confidence_threshold:
+                            # Create match
+                            match = {
+                                "text": phrase,
+                                "type": self.archetype.name,
+                                "confidence": confidence,
+                                "id": str(uuid.uuid4()),
+                                "start_position": offset + chunk_start,
+                                "end_position": offset + chunk_start + len(phrase),
+                                "reference_entity": best_ref,
+                                "embedding": embedding
+                            }
+                            matches.append(match)
+                            self.seen_words.add(word_key)
+        
+        # Finally try to match single words with original thresholds
+        self.similarity_threshold = 0.60  # Reset to original threshold
+        
+        for word_match in re.finditer(r'\b\w+\b', text):
             word = word_match.group()
             chunk_start = word_match.start()
-            
-            print(f"\nProcessing word: {word}", file=sys.stderr)
             
             # Skip if we've already processed this word at this position
             word_key = f"{word}_{offset + chunk_start}"
             if word_key in self.seen_words:
-                print(f"Skipping already seen word: {word}", file=sys.stderr)
                 continue
             
             # Get embedding for word
@@ -252,25 +332,19 @@ class StreamingEntityDetector:
                 [archetype_embedding]
             )[0][0]
             
-            print(f"Archetype similarity for {word}: {archetype_similarity}", file=sys.stderr)
-            
             # If word is similar enough to archetype, check reference entities
             if archetype_similarity >= self.similarity_threshold:
-                print(f"Word {word} passed archetype threshold", file=sys.stderr)
-                
                 # Find best matching reference if any
                 best_ref = None
                 best_similarity = 0
                 
-                for ref in refs:  # Check against all references, not just single-word ones
+                for ref in refs:
                     ref_embedding = np.array(ref.embedding, dtype=np.float32)
                     similarity = cosine_similarity([embedding], [ref_embedding])[0][0]
-                    print(f"Reference similarity for {word} with {ref.text}: {similarity}", file=sys.stderr)
                     
                     # Apply exact match bonus
                     if word.lower() == ref.text.lower():
                         similarity += self.exact_match_bonus
-                        print(f"Applied exact match bonus for {word}", file=sys.stderr)
                     
                     if similarity > best_similarity:
                         best_similarity = similarity
@@ -278,8 +352,7 @@ class StreamingEntityDetector:
                 
                 if best_ref:
                     # Calculate final confidence with reference bonus
-                    confidence = await self._calculate_confidence(best_similarity, num_references)
-                    print(f"Final confidence for {word}: {confidence}", file=sys.stderr)
+                    confidence = await self._calculate_confidence(best_similarity, archetype_similarity, num_references)
                     
                     if confidence >= self.reference_similarity_threshold:
                         # Create match
@@ -295,11 +368,6 @@ class StreamingEntityDetector:
                         }
                         matches.append(match)
                         self.seen_words.add(word_key)
-                        print(f"Added match for {word}", file=sys.stderr)
-                    else:
-                        print(f"Word {word} failed confidence threshold", file=sys.stderr)
-                else:
-                    print(f"No good reference match found for {word}", file=sys.stderr)
         
         return matches
         

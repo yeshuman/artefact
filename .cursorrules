@@ -135,6 +135,28 @@ workflow:
 
 # AI Session Management
 ai_session:
+  memory_bank:
+    required_files:
+      - productContext.md
+      - activeContext.md
+      - systemPatterns.md
+      - techContext.md
+      - progress.md
+      - aiEvaluation.md
+    update_rules:
+      - Check at session start
+      - Update after significant changes
+      - Complete update before memory reset
+  confidence_protocol:
+    threshold: 9
+    check_required:
+      - Before major changes
+      - When troubleshooting
+      - When uncertain about approach
+    documentation:
+      - What is known
+      - Uncertainties
+      - Investigation needed
   session_start_checklist:
     - review_changelog: true
     - check_branch: true

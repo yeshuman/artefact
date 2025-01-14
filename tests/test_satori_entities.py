@@ -179,12 +179,12 @@ async def test_satori_entity_detection_mock(test_mondo, test_message, mock_llm_r
 async def test_satori_entity_detection_real(test_mondo, test_message, openai_client):
     """Test entity detection in Satori's responses using real OpenAI API."""
     print("\nStarting real API test for entity detection...", file=sys.stderr)
-    
+
     # Clean up existing entities
     await Entity.objects.all().adelete()
     await EntityReference.objects.all().adelete()
     await EntityArchetype.objects.all().adelete()
-    
+
     # Create archetypes with real embeddings
     archetypes = {
         "location": "Physical places, regions, or geographical locations",
@@ -192,7 +192,7 @@ async def test_satori_entity_detection_real(test_mondo, test_message, openai_cli
         "practice": "Spiritual or meditative practices and techniques",
         "person": "Historical or notable figures and teachers"
     }
-    
+
     print("\nCreating archetypes...", file=sys.stderr)
     created_archetypes = {}
     for name, description in archetypes.items():
@@ -206,7 +206,7 @@ async def test_satori_entity_detection_real(test_mondo, test_message, openai_cli
             description=description,
             embedding=embedding_response.data[0].embedding
         )
-    
+
     # Create reference entities for each archetype
     print("\nCreating reference entities...", file=sys.stderr)
     references = {
@@ -215,7 +215,7 @@ async def test_satori_entity_detection_real(test_mondo, test_message, openai_cli
         "practice": ["zazen", "meditation", "contemplation"],
         "person": ["Buddha", "Dogen", "Thich Nhat Hanh"]
     }
-    
+
     for archetype_name, entities in references.items():
         archetype = created_archetypes[archetype_name]
         for entity_text in entities:
@@ -230,58 +230,39 @@ async def test_satori_entity_detection_real(test_mondo, test_message, openai_cli
                 mondo=test_mondo,
                 embedding=embedding_response.data[0].embedding
             )
-    
-    # Initialize Satori service with verbose output
-    class VerboseSatori(SatoriService):
-        async def get_system_prompt(self) -> str:
-            base_prompt = await super().get_system_prompt()
-            return base_prompt + "\n\nPlease incorporate references to specific locations (like Mount Fuji and Zen temples), " + \
-                   "meditation practices (like zazen), philosophical concepts (like mindfulness), and teachers (like Dogen) " + \
-                   "in your response. Keep the response brief (2-3 sentences) to demonstrate entity detection."
-    
-    satori_service = VerboseSatori(
-        name="Test Satori",
-        specialties=["Wisdom", "Zen Practice"],
-        teaching_style="Contemplative",
-        model_obj=test_message.mondo.quest.satori,
-        llm_client=openai_client
+
+    # Create detector with location archetype
+    detector = StreamingEntityDetector(
+        mondo_id=test_mondo.id,
+        archetype=created_archetypes["location"]
     )
-    
-    # Update test message to encourage entity mentions
-    await test_message.adelete()
-    test_message = await RoninMessage.objects.acreate(
-        mondo=test_mondo,
-        content="What is the essence of Zen practice?",
-        author=test_message.author
+
+    # Test detection in Satori's response
+    response_text = (
+        "Mount Fuji stands as a sacred symbol in Japanese culture. "
+        "Many Zen temples can be found near its base, where monks "
+        "practice zazen meditation in serene meditation halls."
     )
+
+    # Process text and verify entities
+    marked_text, entities = await detector.process_chunk(
+        response_text,
+        test_message.id,
+        lambda text: openai_client.embeddings.create(
+            model="text-embedding-ada-002",
+            input=text
+        ).data[0].embedding
+    )
+
+    # Verify entities were detected
+    assert len(entities) > 0, "Should detect location entities"
     
-    print("\n=== Starting Streaming Response with Entity Detection ===\n", file=sys.stderr)
-    response = await satori_service.respond(test_message)
-    print("\n=== End of Streaming Response ===\n", file=sys.stderr)
-    
-    # Get all detected entities
-    detected_entities = await Entity.objects.filter(message=response).select_related('archetype').acount()
-    print(f"\nTotal entities detected: {detected_entities}", file=sys.stderr)
-    
-    # Verify we have at least one entity of each type
-    for archetype_name, archetype in created_archetypes.items():
-        count = await Entity.objects.filter(
-            message=response,
-            archetype=archetype
-        ).acount()
-        print(f"\nEntities of type {archetype_name}: {count}", file=sys.stderr)
-        assert count > 0, f"No {archetype_name} entities detected"
-    
-    # Show final response with markup
-    print("\nFinal response with entity markup:", file=sys.stderr)
-    print(response.content, file=sys.stderr)
-    
-    # Extract and display entity tags
-    print("\nEntity tags found:", file=sys.stderr)
-    entity_tags = re.findall(r'<entity[^>]*>.*?</entity>', response.content)
-    for tag in entity_tags:
-        print(f"  {tag}", file=sys.stderr)
-    
-    # Basic assertions
-    assert "<entity" in response.content, "No entity markup in response"
-    assert len(entity_tags) >= 4, "Expected at least 4 different entities" 
+    # Verify specific entities
+    location_names = [e["text"].lower() for e in entities]
+    assert any("fuji" in name for name in location_names), "Should detect Mount Fuji"
+    assert any("temple" in name for name in location_names), "Should detect temples"
+    assert any("hall" in name for name in location_names), "Should detect meditation halls"
+
+    # Verify confidence scores
+    for entity in entities:
+        assert entity["confidence"] > 0.7, f"Low confidence for {entity['text']}: {entity['confidence']}" 

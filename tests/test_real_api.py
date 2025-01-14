@@ -88,9 +88,10 @@ async def test_entity_detection_with_real_embeddings(openai_client, test_dojo, t
     test_quest = await Quest.objects.acreate(
         title="Test Quest",
         ronin=test_ronin,
-        satori=test_satori,
-        dojo=test_dojo
+        satori=test_satori
     )
+
+    # Create mondo for the quest
     test_mondo = await Mondo.objects.acreate(
         dojo=test_dojo,
         quest=test_quest
