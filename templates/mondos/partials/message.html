@@ -1,0 +1,11 @@
+{% if message.author_type == 'ronin' %}
+<div class="message ronin">
+    <div class="author">{{ message.author.name }}</div>
+    <div class="content">{{ message.processed_content|safe }}</div>
+</div>
+{% else %}
+<div class="message satori">
+    <div class="author">{{ message.author.name }}</div>
+    <div class="content">{{ message.processed_content|safe }}</div>
+</div>
+{% endif %} 

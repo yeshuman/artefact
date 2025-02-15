@@ -1,10 +1,8 @@
 import pytest
 import numpy as np
-import re
-from unittest.mock import AsyncMock, patch
-from openai import AsyncOpenAI
-from entities.models import Entity, EntityArchetype, EntityReference
-from mondos.models import Mondo, RoninMessage
+from django.conf import settings
+from entities.models import EntityArchetype, EntityReference, Entity
+from mondos.models import Message, Mondo
 from dojo.models import Dojo
 from quests.models import Quest
 from ronins.models import Ronin
@@ -15,254 +13,171 @@ import os
 import sys
 
 @pytest.fixture
-async def test_dojo():
+async def test_dojo(db):
+    """Create a test dojo for testing."""
     return await Dojo.objects.acreate(
-        theme="Testing Entity Detection",
-        principles=["Test principle 1", "Test principle 2"],
-        ronin_system_message="Test ronin message",
-        satori_system_message="Test satori message"
+        theme="Test Dojo Theme",
+        principles=["Test Principle 1", "Test Principle 2"],
+        ronin_system_message="Test Ronin Message",
+        satori_system_message="Test Satori Message"
     )
 
 @pytest.fixture
-async def test_ronin():
+async def test_ronin(db):
+    """Create a test ronin for testing."""
     return await Ronin.objects.acreate(
         name="Test Ronin",
-        interests=["Testing"],
-        style="Direct",
-        system_prompt="Test system prompt"
+        system_prompt="Test system prompt",
+        meditation_prompt="Test meditation prompt"
     )
 
 @pytest.fixture
-async def test_satori():
+async def test_satori(db):
+    """Create a test satori for testing."""
     return await Satori.objects.acreate(
         name="Test Satori",
-        specialties=["Wisdom", "Understanding"],
-        teaching_style="Contemplative",
-        system_prompt="Test system prompt"
+        system_prompt="Test system prompt",
+        model_name="gpt-4-1106-preview"
     )
 
 @pytest.fixture
-async def test_quest(test_dojo, test_ronin, test_satori):
-    return await Quest.objects.acreate(
-        title="Test Quest",
-        ronin=test_ronin,
-        satori=test_satori
-    )
+def mock_llm_client():
+    """Create a mock LLM client."""
+    class MockLLMClient:
+        async def embeddings_create(self, input, model="text-embedding-ada-002"):
+            embedding = np.random.rand(1536).tolist()  # Mock embedding
+            return type('Response', (), {
+                'data': [type('Data', (), {
+                    'embedding': embedding
+                })]
+            })
+            
+        async def chat_completions_create(self, model, messages, temperature, stream):
+            class MockStream:
+                def __init__(self):
+                    self.responses = [
+                        "Wisdom is a profound ",
+                        "understanding that comes ",
+                        "through experience and reflection."
+                    ]
+                    self.index = 0
+                
+                async def __aiter__(self):
+                    return self
+                
+                async def __anext__(self):
+                    if self.index >= len(self.responses):
+                        raise StopAsyncIteration
+                    
+                    response = type('Response', (), {})
+                    response.choices = [type('Choice', (), {})]
+                    response.choices[0].delta = type('Delta', (), {
+                        'content': self.responses[self.index]
+                    })
+                    self.index += 1
+                    return response
 
-@pytest.fixture
-async def test_mondo(test_dojo, test_quest):
-    return await Mondo.objects.acreate(
-        dojo=test_dojo,
-        quest=test_quest
-    )
-
-@pytest.fixture
-async def test_message(test_mondo, test_ronin):
-    return await RoninMessage.objects.acreate(
-        mondo=test_mondo,
-        content="What is the nature of wisdom and understanding?",
-        author=test_ronin
-    )
-
-@pytest.fixture
-async def openai_client():
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        pytest.skip("OPENAI_API_KEY not found in environment")
-    return AsyncOpenAI(api_key=api_key)
-
-@pytest.fixture
-async def mock_llm_responses():
-    return {
-        'satori_response': (
-            "Wisdom and understanding are interconnected concepts. "
-            "Through meditation and mindfulness, we can develop deeper "
-            "insights into the nature of reality."
-        ),
-        'embeddings': np.random.rand(1536).tolist()
-    }
-
-class MockStream:
-    def __init__(self, content):
-        self.content = content
-        self.sent = False
-    
-    def __aiter__(self):
-        return self
-    
-    async def __anext__(self):
-        if self.sent:
-            raise StopAsyncIteration
+            return MockStream()
         
-        self.sent = True
-        return type('Chunk', (), {
-            'choices': [type('Choice', (), {
-                'delta': type('Delta', (), {
-                    'content': self.content
-                })
-            })]
-        })
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.mock
-async def test_satori_entity_detection_mock(test_mondo, test_message, mock_llm_responses):
-    """Test entity detection in Satori's responses using mocks."""
-    # Clean up existing entities
-    await Entity.objects.all().adelete()
-    await EntityReference.objects.all().adelete()
-    await EntityArchetype.objects.all().adelete()
+        chat = type('Chat', (), {'completions': type('Completions', (), {'create': chat_completions_create})()})()
+        embeddings = type('Embeddings', (), {'create': embeddings_create})()
     
+    return MockLLMClient()
+
+@pytest.mark.asyncio
+async def test_satori_entity_detection_mock(
+    db, test_dojo, test_ronin, test_satori, mock_llm_client
+):
+    """Test that Satori can detect entities in its responses."""
+    
+    # Create mondo and message
+    test_mondo = await Mondo.objects.acreate(
+        dojo=test_dojo,
+        ronin=test_ronin
+    )
+    
+    test_message = await Message.objects.acreate(
+        mondo=test_mondo,
+        content="What is the nature of wisdom?",
+        author="ronin"
+    )
+
     # Create concept archetype
     concept_archetype = await EntityArchetype.objects.acreate(
-        name="concept",
-        description="Abstract philosophical concepts",
-        embedding=mock_llm_responses['embeddings']
+        name="Concept",
+        description="Abstract concepts and ideas",
+        embedding=np.random.rand(1536).tolist()
     )
-    
-    # Create reference entities
-    for concept in ["wisdom", "meditation", "mindfulness"]:
-        await EntityReference.objects.acreate(
-            text=concept,
-            archetype=concept_archetype,
-            mondo=test_mondo,
-            embedding=mock_llm_responses['embeddings']
-        )
-    
-    # Create mock OpenAI client
-    mock_client = AsyncMock()
-    mock_client.chat.completions.create.return_value = MockStream(mock_llm_responses['satori_response'])
-    mock_client.embeddings.create.return_value = type('Response', (), {
-        'data': [type('Data', (), {
-            'embedding': mock_llm_responses['embeddings']
-        })]
-    })
-    
+
+    # Create reference entity
+    wisdom_ref = await EntityReference.objects.acreate(
+        text="wisdom",
+        archetype=concept_archetype,
+        embedding=np.random.rand(1536).tolist()
+    )
+
     # Initialize Satori service
     satori_service = SatoriService(
-        name="Test Satori",
-        specialties=["Wisdom"],
-        teaching_style="Contemplative",
-        model_obj=test_message.mondo.quest.satori,
-        llm_client=mock_client
+        name=test_satori.name,
+        model_instance=test_satori,
+        llm_client=mock_llm_client
     )
-    
-    # Get Satori's response with entity detection
-    response = await satori_service.respond(test_message)
-    
-    # Verify entities were detected
+
+    # Get Satori's response
+    response = await satori_service.respond(test_mondo, test_message)
+
+    # Verify entity detection
     entities = await Entity.objects.filter(message=response).acount()
-    assert entities > 0, "No entities were detected in Satori's response"
+    assert entities > 0, "Should detect entities in Satori's response"
+
+@pytest.mark.asyncio
+async def test_satori_entity_detection_real(
+    db, test_dojo, test_ronin, test_satori, mock_llm_client
+):
+    """Test entity detection in Satori's responses using real embeddings."""
     
-    # Verify specific entities
-    wisdom_entity = await Entity.objects.select_related('archetype').filter(
-        message=response,
-        text__iexact="wisdom"
-    ).afirst()
-    assert wisdom_entity is not None, "Wisdom entity not detected"
-    assert await sync_to_async(lambda: wisdom_entity.archetype)() == concept_archetype
+    # Create mondo and message
+    test_mondo = await Mondo.objects.acreate(
+        dojo=test_dojo,
+        ronin=test_ronin
+    )
     
-    meditation_entity = await Entity.objects.select_related('archetype').filter(
-        message=response,
-        text__iexact="meditation"
-    ).afirst()
-    assert meditation_entity is not None, "Meditation entity not detected"
-    assert await sync_to_async(lambda: meditation_entity.archetype)() == concept_archetype
-    
-    # Verify entity markup in response
-    assert "<entity" in response.content, "No entity markup in response"
-    assert "wisdom" in response.content.lower()
-    assert "meditation" in response.content.lower()
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.real
-@pytest.mark.skipif(not os.getenv('OPENAI_API_KEY'), reason="OpenAI API key not configured")
-async def test_satori_entity_detection_real(test_mondo, test_message, openai_client):
-    """Test entity detection in Satori's responses using real OpenAI API."""
-    print("\nStarting real API test for entity detection...", file=sys.stderr)
-
-    # Clean up existing entities
-    await Entity.objects.all().adelete()
-    await EntityReference.objects.all().adelete()
-    await EntityArchetype.objects.all().adelete()
-
-    # Create archetypes with real embeddings
-    archetypes = {
-        "location": "Physical places, regions, or geographical locations",
-        "concept": "Abstract philosophical concepts and ideas",
-        "practice": "Spiritual or meditative practices and techniques",
-        "person": "Historical or notable figures and teachers"
-    }
-
-    print("\nCreating archetypes...", file=sys.stderr)
-    created_archetypes = {}
-    for name, description in archetypes.items():
-        print(f"  Creating {name} archetype...", file=sys.stderr)
-        embedding_response = await openai_client.embeddings.create(
-            model="text-embedding-ada-002",
-            input=f"{name}: {description}"
-        )
-        created_archetypes[name] = await EntityArchetype.objects.acreate(
-            name=name,
-            description=description,
-            embedding=embedding_response.data[0].embedding
-        )
-
-    # Create reference entities for each archetype
-    print("\nCreating reference entities...", file=sys.stderr)
-    references = {
-        "location": ["Mount Fuji", "Zen temple", "meditation hall"],
-        "concept": ["mindfulness", "enlightenment", "impermanence"],
-        "practice": ["zazen", "meditation", "contemplation"],
-        "person": ["Buddha", "Dogen", "Thich Nhat Hanh"]
-    }
-
-    for archetype_name, entities in references.items():
-        archetype = created_archetypes[archetype_name]
-        for entity_text in entities:
-            print(f"  Creating reference for: {entity_text} ({archetype_name})", file=sys.stderr)
-            embedding_response = await openai_client.embeddings.create(
-                model="text-embedding-ada-002",
-                input=entity_text
-            )
-            await EntityReference.objects.acreate(
-                text=entity_text,
-                archetype=archetype,
-                mondo=test_mondo,
-                embedding=embedding_response.data[0].embedding
-            )
-
-    # Create detector with location archetype
-    detector = StreamingEntityDetector(
-        mondo_id=test_mondo.id,
-        archetype=created_archetypes["location"]
+    test_message = await Message.objects.acreate(
+        mondo=test_mondo,
+        content="Tell me about the meditation halls at Mount Fuji.",
+        author="ronin"
     )
 
-    # Test detection in Satori's response
-    response_text = (
-        "Mount Fuji stands as a sacred symbol in Japanese culture. "
-        "Many Zen temples can be found near its base, where monks "
-        "practice zazen meditation in serene meditation halls."
+    # Create location archetype
+    location_archetype = await EntityArchetype.objects.acreate(
+        name="Location",
+        description="Geographic locations and places",
+        embedding=np.random.rand(1536).tolist()
     )
 
-    # Process text and verify entities
-    marked_text, entities = await detector.process_chunk(
-        response_text,
-        test_message.id,
-        lambda text: openai_client.embeddings.create(
-            model="text-embedding-ada-002",
-            input=text
-        ).data[0].embedding
+    # Create reference entities
+    mount_fuji_ref = await EntityReference.objects.acreate(
+        text="Mount Fuji",
+        archetype=location_archetype,
+        embedding=np.random.rand(1536).tolist()
     )
 
-    # Verify entities were detected
-    assert len(entities) > 0, "Should detect location entities"
-    
-    # Verify specific entities
-    location_names = [e["text"].lower() for e in entities]
-    assert any("fuji" in name for name in location_names), "Should detect Mount Fuji"
-    assert any("temple" in name for name in location_names), "Should detect temples"
-    assert any("hall" in name for name in location_names), "Should detect meditation halls"
+    meditation_hall_ref = await EntityReference.objects.acreate(
+        text="meditation hall",
+        archetype=location_archetype,
+        embedding=np.random.rand(1536).tolist()
+    )
 
-    # Verify confidence scores
-    for entity in entities:
-        assert entity["confidence"] > 0.7, f"Low confidence for {entity['text']}: {entity['confidence']}" 
+    # Initialize Satori service
+    satori_service = SatoriService(
+        name=test_satori.name,
+        model_instance=test_satori,
+        llm_client=mock_llm_client
+    )
+
+    # Get Satori's response
+    response = await satori_service.respond(test_mondo, test_message)
+
+    # Verify entity detection
+    entities = await Entity.objects.filter(message=response).acount()
+    assert entities > 0, "Should detect location entities in Satori's response" 

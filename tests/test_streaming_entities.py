@@ -41,7 +41,8 @@ async def test_quest(test_dojo, test_ronin, test_satori):
     return await Quest.objects.acreate(
         title="Test Quest",
         ronin=test_ronin,
-        satori=test_satori
+        satori=test_satori,
+        dojo=test_dojo
     )
 
 @pytest.fixture
@@ -100,7 +101,7 @@ def mock_embedding_fn():
     """Create a mock embedding function that returns matching vectors for known entities."""
     async def _mock_embedding(text: str) -> np.ndarray:
         # Return ones vector for known entities to match reference embeddings
-        if text.lower() in ["paris", "london"]:
+        if text.lower() in ["paris", "london", "new york"]:
             return np.ones(1536, dtype=np.float32)
         # Return zeros for other words to ensure no false matches
         return np.zeros(1536, dtype=np.float32)
@@ -109,7 +110,7 @@ def mock_embedding_fn():
 @pytest.fixture
 def detector(test_mondo):
     """Create a detector instance for testing."""
-    detector = StreamingEntityDetector(mondo_id=test_mondo.id)
+    detector = StreamingEntityDetector(message_id=test_mondo.id)
     detector.similarity_threshold = 0.5  # Lower threshold for testing
     return detector
 
@@ -231,13 +232,13 @@ async def test_high_confidence_reference_creation(
     paris_ref = await EntityReference.objects.acreate(
         text="Paris",
         archetype=location_archetype,
-        mondo_id=detector.mondo_id,
+        mondo=test_message.mondo,
         embedding=np.ones(1536, dtype=np.float32)
     )
     london_ref = await EntityReference.objects.acreate(
         text="London",
         archetype=location_archetype,
-        mondo_id=detector.mondo_id,
+        mondo=test_message.mondo,
         embedding=np.ones(1536, dtype=np.float32)
     )
 
@@ -253,7 +254,7 @@ async def test_high_confidence_reference_creation(
     assert paris_entity["type"] == location_archetype.name
     assert london_entity["type"] == location_archetype.name
     assert paris_entity["confidence"] == pytest.approx(1.0, abs=1e-6)
-    assert london_entity["confidence"] == pytest.approx(1.0, abs=1e-6) 
+    assert london_entity["confidence"] == pytest.approx(1.0, abs=1e-6)
 
 @pytest.mark.django_db(transaction=True)
 async def test_reference_entity_storage_threshold(
@@ -266,7 +267,7 @@ async def test_reference_entity_storage_threshold(
     paris_ref = await EntityReference.objects.acreate(
         text="Paris",
         archetype=location_archetype,
-        mondo_id=detector.mondo_id,
+        mondo=test_message.mondo,
         embedding=np.ones(1536, dtype=np.float32)
     )
     
@@ -284,7 +285,7 @@ async def test_reference_entity_storage_threshold(
     berlin_refs = await EntityReference.objects.filter(
         text="Berlin",
         archetype=location_archetype,
-        mondo_id=detector.mondo_id
+        mondo=test_message.mondo
     ).acount()
     assert berlin_refs == 0
 
@@ -299,7 +300,7 @@ async def test_multi_word_entity_detection(
     new_york_ref = await EntityReference.objects.acreate(
         text="New York",
         archetype=location_archetype,
-        mondo_id=detector.mondo_id,
+        mondo=test_message.mondo,
         embedding=np.ones(1536, dtype=np.float32)
     )
     

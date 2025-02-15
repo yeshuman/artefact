@@ -1,0 +1,163 @@
+{% if entity %}
+<div class="artefact-detail">
+    <div class="artefact-header">
+        <h3>{{ entity.text }}</h3>
+        <span class="artefact-type">{{ entity.archetype.name }}</span>
+    </div>
+    
+    <div class="artefact-body">
+        {% if entity.reference_entity %}
+            <!-- Reference Entity Details -->
+            <div class="reference-details">
+                <h4>Details</h4>
+                <p>{{ entity.reference_entity.description|default:"No description available." }}</p>
+                
+                {% if entity.reference_entity.location %}
+                <div class="location-info">
+                    <h4>Location</h4>
+                    <p>{{ entity.reference_entity.location.description }}</p>
+                </div>
+                {% endif %}
+            </div>
+            
+            {% if entity.reference_entity.related_entities.exists %}
+            <div class="related-entities">
+                <h4>Related Places</h4>
+                <ul>
+                    {% for related in entity.reference_entity.related_entities.all %}
+                    <li>{{ related.text }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        {% else %}
+            <!-- Entity without Reference -->
+            <div class="entity-status">
+                <p class="status {{ entity.state }}">
+                    {% if entity.state == 'detected' %}
+                        Entity detected, gathering information...
+                    {% elif entity.state == 'loading' %}
+                        Loading entity details...
+                    {% elif entity.state == 'loaded' %}
+                        Entity information loaded.
+                    {% else %}
+                        Could not load entity details.
+                    {% endif %}
+                </p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+.artefact-detail {
+    padding: var(--spacing);
+}
+
+.artefact-header {
+    margin-bottom: var(--spacing);
+    padding-bottom: var(--spacing);
+    border-bottom: 1px solid var(--border);
+}
+
+.artefact-header h3 {
+    margin: 0;
+    color: var(--text);
+    font-size: 1.5rem;
+}
+
+.artefact-type {
+    display: inline-block;
+    margin-top: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--bg-main);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    color: var(--text-light);
+}
+
+.artefact-body {
+    color: var(--text);
+}
+
+.artefact-body h4 {
+    margin: var(--spacing) 0 0.5rem;
+    color: var(--text);
+    font-size: 1rem;
+}
+
+.reference-details p,
+.location-info p {
+    margin: 0 0 var(--spacing);
+    color: var(--text);
+    line-height: 1.6;
+}
+
+.related-entities ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.related-entities li {
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    background: var(--bg-main);
+    border-radius: var(--radius);
+    color: var(--text);
+}
+
+.entity-status {
+    padding: var(--spacing);
+    background: var(--bg-main);
+    border-radius: var(--radius);
+}
+
+.status {
+    margin: 0;
+    padding-left: 1.5rem;
+    position: relative;
+}
+
+.status::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 50%;
+}
+
+.status.detected::before {
+    background: var(--primary);
+    opacity: 0.5;
+}
+
+.status.loading::before {
+    background: var(--primary);
+    animation: pulse 1s infinite;
+}
+
+.status.loaded::before {
+    background: var(--primary);
+}
+
+.status.failed::before {
+    background: #dc2626;
+}
+
+@keyframes pulse {
+    0% { opacity: 0.5; }
+    50% { opacity: 1; }
+    100% { opacity: 0.5; }
+}
+</style>
+{% else %}
+<div class="artefact-detail">
+    <div class="message">
+        Select an entity to view details...
+    </div>
+</div>
+{% endif %} 

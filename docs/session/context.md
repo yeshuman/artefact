@@ -1,24 +1,33 @@
-# Session Context
+# Current Session Context
 
-## Current State
-- Completed comprehensive product documentation update
-- Integrated insights from notes into formal documentation
-- Refined architecture and technical specifications
+## Current Context
 
-## Active Discussion
-- Documentation organization and structure
-- Product feature definition and scope
-- System architecture and components
-- Technical implementation details
+### Active Development
+- Working on fixing entity detection tests and database setup
+- Addressing issues with test database configuration
+- Implementing fixes for StreamingEntityDetector
+- Updating Satori model and test fixtures
 
-## Recent Decisions
-- Separated session and product documentation
-- Defined clear update triggers for documentation
-- Organized product features and capabilities
-- Established technical constraints and requirements
+### Current State
+- Running reset.sh to properly initialize databases
+- Test failures due to database connection issues
+- Need to ensure proper database setup for tests
+- Working on fixing entity detection functionality
 
-## Next Steps
-- Begin implementation of core streaming architecture
-- Set up initial project structure
-- Implement basic entity detection system
-- Create testing framework 
+### Recent Changes
+- Added model_name field to Satori model
+- Updated process_chunk method signature
+- Fixed mondo_id handling in tests
+- Improved entity detection logic
+
+### Next Steps
+- Ensure database setup is working correctly
+- Fix remaining test failures
+- Verify entity detection functionality
+- Improve test coverage and reliability
+
+### Open Issues
+- Database connection errors in tests
+- Entity detection accuracy
+- Test fixture setup
+- Word boundary handling in entity detection

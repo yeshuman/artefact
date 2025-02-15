@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mondo-container">
+    <div class="conversation-container">
+        <!-- Messages will be streamed here -->
+        <div id="messages" 
+             hx-sse="connect:/stream/"
+             hx-swap="beforeend"
+             hx-trigger="sse:message">
+        </div>
+        
+        <!-- Artefacts will be streamed here -->
+        <div id="artefacts"
+             hx-sse="connect:/artefacts/stream/"
+             hx-swap="beforeend"
+             hx-trigger="sse:entity_detected">
+        </div>
+        
+        <!-- Notifications will appear here -->
+        <div id="notifications"
+             class="notifications"
+             hx-sse="connect:/stream/"
+             hx-swap="beforeend"
+             hx-trigger="sse:dojo_event">
+        </div>
+    </div>
+    
+    <!-- Message input form -->
+    <form id="message-form" 
+          hx-post="/message/"
+          hx-trigger="submit"
+          hx-swap="none">
+        <textarea name="content" 
+                  placeholder="Enter your message..."
+                  required></textarea>
+        <button type="submit">Send</button>
+    </form>
+</div>
+
+<style>
+.mondo-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 1rem;
+}
+
+.conversation-container {
+    flex: 1;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+    display: flex;
+    gap: 1rem;
+}
+
+#messages {
+    flex: 2;
+    padding: 1rem;
+    background: #f5f5f5;
+    border-radius: 8px;
+}
+
+#artefacts {
+    flex: 1;
+    padding: 1rem;
+    background: #f0f0f0;
+    border-radius: 8px;
+}
+
+.notifications {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    width: 300px;
+    z-index: 1000;
+}
+
+.notification {
+    background: #fff;
+    padding: 1rem;
+    margin-bottom: 0.5rem;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    animation: slideIn 0.3s ease-out;
+}
+
+.notification.info {
+    border-left: 4px solid #2196f3;
+}
+
+.notification.success {
+    border-left: 4px solid #4caf50;
+}
+
+.notification.warning {
+    border-left: 4px solid #ff9800;
+}
+
+@keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+.message {
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    border-radius: 4px;
+}
+
+.message.ronin {
+    background: #e3f2fd;
+    margin-right: 2rem;
+}
+
+.message.satori {
+    background: #f3e5f5;
+    margin-left: 2rem;
+}
+
+.message .author {
+    font-weight: bold;
+    margin-bottom: 0.25rem;
+}
+
+.message .content {
+    white-space: pre-wrap;
+}
+
+entity {
+    background: #fff3e0;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    cursor: pointer;
+    border: 1px solid #ffe0b2;
+}
+
+entity[state="loading"] {
+    background: #e0e0e0;
+    animation: pulse 1.5s infinite;
+}
+
+entity[state="loaded"] {
+    background: #e8f5e9;
+    border-color: #c8e6c9;
+}
+
+entity[state="failed"] {
+    background: #ffebee;
+    border-color: #ffcdd2;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+#message-form {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem;
+    background: #fff;
+    border-top: 1px solid #e0e0e0;
+}
+
+#message-form textarea {
+    flex: 1;
+    min-height: 60px;
+    padding: 0.5rem;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    resize: vertical;
+}
+
+#message-form button {
+    padding: 0.5rem 1rem;
+    background: #2196f3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#message-form button:hover {
+    background: #1976d2;
+}
+</style>
+
+<script>
+document.body.addEventListener('htmx:sseMessage', function(event) {
+    // Auto-scroll to bottom when new message arrives
+    const messages = document.getElementById('messages');
+    messages.scrollTop = messages.scrollHeight;
+});
+
+document.body.addEventListener('htmx:sseError', function(event) {
+    console.error('SSE Error:', event.detail.error);
+    // Show error notification
+    const notifications = document.getElementById('notifications');
+    const notification = document.createElement('div');
+    notification.className = 'notification warning';
+    notification.textContent = 'Connection error. Reconnecting...';
+    notifications.appendChild(notification);
+    
+    // Remove notification after 5 seconds
+    setTimeout(() => {
+        notification.remove();
+    }, 5000);
+});
+
+document.body.addEventListener('click', function(event) {
+    if (event.target.matches('entity')) {
+        // Load entity details
+        const entityId = event.target.getAttribute('id');
+        const artefactContent = document.getElementById('artefact-content');
+        artefactContent.setAttribute('hx-get', `/artefacts/${entityId}/`);
+        artefactContent.setAttribute('hx-trigger', 'load');
+    }
+});
+
+// Handle dojo events
+document.body.addEventListener('htmx:sseMessage', function(event) {
+    if (event.detail.type === 'dojo_event') {
+        const data = JSON.parse(event.detail.data);
+        const notifications = document.getElementById('notifications');
+        const notification = document.createElement('div');
+        notification.className = `notification ${data.level || 'info'}`;
+        notification.textContent = data.message;
+        notifications.appendChild(notification);
+        
+        // Remove notification after 5 seconds
+        setTimeout(() => {
+            notification.remove();
+        }, 5000);
+    }
+});
+</script>
+{% endblock %} 

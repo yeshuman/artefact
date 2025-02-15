@@ -21,6 +21,11 @@ class Satori(models.Model):
         help_text="Dynamic meditation prompt based on dojo theme",
         null=True
     )
+    model_name = models.CharField(
+        max_length=100,
+        default="gpt-4-1106-preview",
+        help_text="The OpenAI model to use for this Satori"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

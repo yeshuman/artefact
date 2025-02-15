@@ -1,26 +1,30 @@
-# Session Changes
+# Session Changes Log
 
-## Documentation Changes
-1. Updated Product Documentation:
-   - Refined project purpose and scope
-   - Enhanced architecture documentation
-   - Updated technical specifications
-   - Detailed progress tracking
-
-2. Integrated Information from Notes:
-   - Conversation flow details
-   - Entity/Artefact models
-   - Personality management
-   - Dojo specifications
+## Database Changes
+- Added model_name field to Satori model
+- Updated database schema for entity detection
+- Added migrations for new fields
 
 ## Code Changes
-No code changes yet - focusing on documentation and architecture
+- Updated StreamingEntityDetector.process_chunk method signature
+- Fixed mondo_id handling in entity detection tests
+- Improved word boundary handling in entity detection
+- Enhanced entity detection accuracy
+- Updated test fixtures for proper initialization
 
-## Tests
-No tests added yet - test framework being designed
+## Test Changes
+- Fixed test database configuration
+- Updated test fixtures to include required fields
+- Improved test coverage for entity detection
+- Added more comprehensive test cases
 
-## Rationale
-- Establishing clear project documentation before implementation
-- Ensuring comprehensive understanding of system requirements
-- Creating solid foundation for development
-- Maintaining clear scope and feature set 
+## Configuration Changes
+- Updated reset.sh for proper database initialization
+- Added vector extension setup for test databases
+- Improved database cleanup and reset process
+
+## Documentation Updates
+- Updated context documentation
+- Added notes about database setup
+- Documented test requirements
+- Added information about entity detection changes 

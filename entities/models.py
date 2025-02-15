@@ -119,6 +119,11 @@ class EntityReference(models.Model):
         related_name='reference_entities',
         help_text="The archetype this reference entity belongs to"
     )
+    description = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Description of this reference entity"
+    )
     embedding = VectorField(dimensions=1536)  # For OpenAI embeddings
     mondo = models.ForeignKey('mondos.Mondo', on_delete=models.CASCADE, related_name='entity_references', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

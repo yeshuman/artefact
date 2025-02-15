@@ -1,10 +1,10 @@
-from django.urls import path
-from mondos.views import mondo_view, mondo_stream, artefact_stream, mondo_message
+from django.contrib import admin
+from django.urls import path, include
+from mondos.views import mondo_view
 
 urlpatterns = [
-    path('', mondo_view, name='mondo_view'),
-    path('stream/mondo/', mondo_stream, name='mondo_stream'),
-    path('stream/artefacts/', artefact_stream, name='artefact_stream'),
-    path('mondo/message/', mondo_message, name='mondo_message'),
+    path('admin/', admin.site.urls),
+    path('', mondo_view, name='home'),
+    path('mondos/', include('mondos.urls', namespace='mondos')),
 ]
 

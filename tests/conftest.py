@@ -2,6 +2,14 @@ import pytest
 from django.conf import settings
 import os
 import json
+import numpy as np
+from django.test import Client
+from dojo.models import Dojo
+from satoris.models import Satori
+from quests.models import Quest
+from ronins.models import Ronin
+from mondos.models import Mondo
+from entities.models import EntityArchetype
 
 pytest_plugins = ["pytest_asyncio"]
 
@@ -34,9 +42,47 @@ def use_real_api(request):
     return request.config.getoption("--use-real-api")
 
 @pytest.fixture
-async def async_client():
-    from django.test.client import AsyncClient
-    return AsyncClient()
+def client():
+    return Client()
+
+@pytest.fixture
+async def test_dojo():
+    return await Dojo.objects.acreate(
+        theme="Test Dojo",
+        principles=["Seek knowledge", "Share wisdom"]
+    )
+
+@pytest.fixture
+async def test_ronin():
+    return await Ronin.objects.acreate(name="Test Ronin")
+
+@pytest.fixture
+async def test_satori():
+    return await Satori.objects.acreate(name="Test Satori")
+
+@pytest.fixture
+async def test_quest(test_dojo, test_ronin, test_satori):
+    return await Quest.objects.acreate(
+        title="Test Quest",
+        dojo=test_dojo,
+        ronin=test_ronin,
+        satori=test_satori
+    )
+
+@pytest.fixture
+async def test_mondo(test_quest, test_dojo):
+    return await Mondo.objects.acreate(
+        quest=test_quest,
+        dojo=test_dojo
+    )
+
+@pytest.fixture
+async def test_archetype():
+    return await EntityArchetype.objects.acreate(
+        name="Location.City",
+        description="A major urban settlement",
+        embedding=np.random.rand(1536).tolist()
+    )
 
 @pytest.fixture(scope='session')
 def django_db_setup(django_db_blocker):

@@ -1,0 +1,59 @@
+{% if entity.reference_entity %}
+<div class="entity-details">
+    <h3>{{ entity.text }}</h3>
+    <div class="entity-type">{{ entity.archetype.name }}</div>
+    <div class="entity-confidence">Confidence: {{ entity.confidence|floatformat:2 }}</div>
+    {% if entity.reference_entity.description %}
+    <div class="entity-description">
+        {{ entity.reference_entity.description }}
+    </div>
+    {% endif %}
+</div>
+{% else %}
+<div class="entity-details">
+    <h3>{{ entity.text }}</h3>
+    <div class="entity-type">{{ entity.archetype.name }}</div>
+    <div class="entity-confidence">Confidence: {{ entity.confidence|floatformat:2 }}</div>
+    <div class="entity-status">
+        No reference details available yet...
+    </div>
+</div>
+{% endif %}
+
+<style>
+.entity-details {
+    padding: 1rem;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.entity-details h3 {
+    margin: 0 0 0.5rem 0;
+    color: #1976d2;
+}
+
+.entity-type {
+    font-size: 0.875rem;
+    color: #757575;
+    margin-bottom: 0.5rem;
+}
+
+.entity-confidence {
+    font-size: 0.875rem;
+    color: #2e7d32;
+    margin-bottom: 1rem;
+}
+
+.entity-description {
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: #212121;
+}
+
+.entity-status {
+    font-size: 0.9375rem;
+    color: #757575;
+    font-style: italic;
+}
+</style> 

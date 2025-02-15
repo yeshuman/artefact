@@ -3,6 +3,11 @@ from django.db import models
 
 class Quest(models.Model):
     """A journey of discovery between a Ronin and Satori"""
+    dojo = models.ForeignKey(
+        'dojo.Dojo',
+        on_delete=models.CASCADE,
+        related_name='quests'
+    )
     ronin = models.ForeignKey(
         'ronins.Ronin',
         on_delete=models.CASCADE,

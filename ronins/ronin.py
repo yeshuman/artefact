@@ -13,225 +13,91 @@ if TYPE_CHECKING:
 
 
 class Ronin(Sensei):
-    """A wandering seeker in search of the world's artifacts and wisdom.
+    """A seeker of knowledge in the dojo."""
     
-    The Ronin's journey is one of discovery and questioning. They observe
-    the world through the lens of their interests and personal style, forming
-    questions that lead to deeper understanding.
-    """
-    
-    def __init__(
-        self,
-        name: str,
-        interests: list[str],
-        style: str,
-        model_obj: Optional[Ronin] = None,  # DB record
-        llm_client: Optional[Any] = None
-    ):
-        """Initialize a new Ronin instance.
+    async def respond(self, mondo: 'Mondo', message: Optional['SatoriMessage'] = None) -> 'RoninMessage':
+        """Generate a response in the conversation.
         
-        Args:
-            name: The Ronin's given name
-            interests: List of interests and areas of exploration
-            style: Personal approach and characteristics
-            model_obj: Optional Django model instance
-            llm_client: Optional LLM client for interactions
+        If message is None, this is the initial question to start the conversation.
         """
-        super().__init__(name, model_obj, llm_client)
-        self.interests = interests
-        self.style = style
-        self.model_obj = model_obj  # Store reference to DB record
-    
-    async def message(self, mondo: 'Mondo', content: str) -> 'RoninMessage':
-        """Create a question or reflection in a Mondo.
+        # Build conversation context
+        messages = []
         
-        Args:
-            mondo: The dialogue context
-            content: The question or reflection
+        # Add system message to guide the response
+        if not message:
+            # Initial question - add system message about asking first question
+            messages.append({
+                "role": "system",
+                "content": (
+                    f"You are {self.name}, a seeker of knowledge in the dojo. "
+                    f"Your interests are: {self.interests}. Your communication style is: {self.style}. "
+                    f"The dojo's theme is: {mondo.theme}. Its principles are: {mondo.principles}. "
+                    "You are about to begin a philosophical dialogue with your guide. "
+                    "Ask a profound opening question that aligns with the dojo's theme and principles, "
+                    "drawing from your interests and expressing it in your unique style."
+                )
+            })
+        else:
+            # Regular response - add system message about continuing conversation
+            messages.append({
+                "role": "system", 
+                "content": (
+                    f"You are {self.name}, continuing a philosophical dialogue in the dojo. "
+                    f"Your interests are: {self.interests}. Your communication style is: {self.style}. "
+                    "Consider the guide's previous response carefully and respond in a way that "
+                    "deepens the exploration of the topic while staying true to your character."
+                )
+            })
             
-        Returns:
-            Message: The created RoninMessage
-        """
-        from mondos.models import RoninMessage
+            # Add previous messages for context
+            async for msg in mondo.messages.all():
+                role = "assistant" if isinstance(msg, SatoriMessage) else "user"
+                messages.append({"role": role, "content": msg.content})
+        
+        # Get response from LLM
+        response = await self.llm_client.chat.completions.create(
+            model="gpt-4-1106-preview",
+            messages=messages,
+            temperature=0.7,
+            stream=True
+        )
+        
+        # Collect response chunks
+        content = ""
+        async for chunk in response:
+            if chunk.choices[0].delta.content:
+                content += chunk.choices[0].delta.content
+                
+        # Create and return message
         return await RoninMessage.objects.acreate(
             mondo=mondo,
             content=content,
             author=self.model_obj
         )
-    
-    async def respond(self, message: 'Message') -> 'RoninMessage':
-        """Respond to a Satori's guidance with further questions.
         
-        Args:
-            message: The message to respond to
-            
-        Returns:
-            Message: The follow-up question
-        """
-        if not self.llm_client:
-            raise ValueError("Ronin requires an LLM client to formulate responses")
-        
-        # Get message content and mondo safely
-        content = await sync_to_async(lambda: message.content)()
-        mondo = await sync_to_async(lambda: message.mondo)()
-        
-        # Get conversation history
-        messages = [msg async for msg in mondo.messages.all()]
-        history = []
-        for msg in messages:
-            msg_content = await sync_to_async(lambda: msg.content)()
-            msg_author = await sync_to_async(lambda: msg.author.name)()
-            role = "assistant" if isinstance(msg, SatoriMessage) else "user"
-            history.append({"role": role, "content": msg_content})
-            
-        # Use LLM to generate a follow-up question with conversation history
+    async def contemplate_quest(self) -> str:
+        """Contemplate and name the quest being undertaken."""
         stream = await self.llm_client.chat.completions.create(
             model="gpt-4-1106-preview",
             messages=[{
                 "role": "system",
-                "content": await self.get_system_prompt()
-            }] + history,
+                "content": self.model_obj.system_prompt
+            }, {
+                "role": "user",
+                "content": (
+                    f"As {self.name}, contemplate your quest in this dojo.\n"
+                    "What is the title that best captures your seeking?"
+                )
+            }],
             stream=True
         )
         
-        # Collect streamed response
-        full_response = []
+        # Collect response
+        title_parts = []
         async for chunk in stream:
             if hasattr(chunk.choices[0].delta, 'content'):
-                content_chunk = chunk.choices[0].delta.content
-                if content_chunk:
-                    logger.info(f"Ronin response chunk: {content_chunk}")
-                    full_response.append(content_chunk)
+                content = chunk.choices[0].delta.content
+                if content:
+                    title_parts.append(content)
         
-        response_content = ''.join(full_response)
-        return await self.message(mondo, response_content)
-    
-    async def get_system_prompt(self) -> str:
-        """Get the system prompt for this Ronin.
-        
-        Returns:
-            str: The system prompt for LLM interactions
-        """
-        if self.model_obj and self.model_obj.system_prompt:
-            # Use stored dynamic prompt with interpolated values
-            return self.model_obj.system_prompt.format(
-                name=self.name,
-                interests=', '.join(self.interests),
-                style=self.style
-            )
-        
-        # Fallback to default prompt
-        return (
-            f"You are a seeker named {self.name} with interests in "
-            f"{', '.join(self.interests)} and a {self.style} "
-            f"approach. You are on a journey of discovery.\n\n"
-            f"Consider the full context of your conversation so far and "
-            f"respond with thoughtful questions or reflections that deepen "
-            f"your understanding."
-        )
-    
-    async def get_meditation_prompt(self) -> str:
-        """Get the meditation prompt for Ronin self-discovery."""
-        if self.model_obj and self.model_obj.meditation_prompt:
-            return self.model_obj.meditation_prompt
-            
-        # Fallback to default prompt
-        return (
-            "Through deep meditation, discover your identity as a seeker:\n"
-            "1. Your name (a meaningful name that fits the dojo's theme)\n"
-            "2. Your three main interests in exploring and learning\n"
-            "3. Your personal style and approach (if not already specified)\n\n"
-            "Consider the dojo's theme and cultural context for inspiration.\n"
-            "Respond in JSON format with keys: name (string), interests (list), and style (string)"
-        )
-    
-    async def create_from_meditation(self, meditation_data: Dict[str, Any]) -> None:
-        """Create or update Ronin from meditation data."""
-        # Update instance attributes
-        self.name = meditation_data['name']
-        self.interests = meditation_data['interests']
-        if not self.style:  # Only update if not provided during initialization
-            self.style = meditation_data['style']
-        
-        # Create or update DB record
-        from ronins.models import Ronin as RoninModel
-        if self.model_obj is None:
-            self.model_obj = await RoninModel.objects.acreate(
-                name=self.name,
-                interests=self.interests,
-                style=self.style
-            )
-        else:
-            self.model_obj.name = self.name
-            self.model_obj.interests = self.interests
-            self.model_obj.style = self.style
-            await sync_to_async(self.model_obj.save)()
-
-    async def contemplate_quest(self) -> str:
-        """Contemplate and name a quest that aligns with interests and style."""
-        # Stream quest contemplation
-        quest_response = await self.stream_llm_response([{
-            "role": "system",
-            "content": await self.get_system_prompt()
-        }, {
-            "role": "user",
-            "content": (
-                "Through meditation, envision the quest you wish to undertake. "
-                "What profound question or exploration calls to you?\n\n"
-                "Name this quest in a way that reflects its depth and your seeking nature. "
-                "Consider the style of titles that would fit the dojo's theme.\n\n"
-                "Respond in JSON format with key: quest_title (string)"
-            )
-        }])
-        
-        # Clean and parse the response
-        try:
-            cleaned_json = self._clean_json_response(quest_response)
-            contemplation = json.loads(cleaned_json)
-            logger.info(f"Quest contemplation: {contemplation['quest_title']}")
-            return contemplation['quest_title']
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse quest contemplation: {quest_response}")
-            raise
-
-    async def contemplate_understanding(self, message_content: str) -> Dict[str, Any]:
-        """Contemplate whether you've reached understanding or should continue seeking.
-        
-        As a Ronin, reflect on the latest exchange and determine if you've reached
-        a satisfactory level of understanding for your current quest, or if there
-        are still depths to explore.
-        
-        Args:
-            message_content: The content of the latest message to contemplate
-            
-        Returns:
-            Dict with keys:
-                - should_end (bool): Whether to conclude the dialogue
-                - reason (str): Reflection on why to continue or conclude
-        """
-        # Stream contemplation response
-        contemplation = await self.stream_llm_response([{
-            "role": "system",
-            "content": (
-                f"You are {self.name}, a seeker of wisdom with interests in "
-                f"{', '.join(self.interests)} and a {self.style} approach.\n\n"
-                "Consider the latest exchange in your dialogue. Have you reached a state "
-                "of understanding that satisfies your quest? Or do you have more to explore?\n\n"
-                "Respond in JSON format with keys:\n"
-                "- should_end (boolean): true if you've reached understanding\n"
-                "- reason (string): your reflection on why you choose to continue or conclude"
-            )
-        }, {
-            "role": "user",
-            "content": message_content
-        }])
-        
-        # Clean and parse the response
-        try:
-            cleaned_json = self._clean_json_response(contemplation)
-            decision = json.loads(cleaned_json)
-            logger.info(f"Understanding contemplation: {json.dumps(decision, indent=2)}")
-            return decision
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse understanding contemplation: {contemplation}")
-            raise
+        return ''.join(title_parts).strip()
